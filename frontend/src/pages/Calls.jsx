@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import api, { ACCENTS } from "@/lib/api";
-import { Phone, Backspace, X, Warning } from "@phosphor-icons/react";
+import { Phone, PhoneDisconnect, Backspace, X, Warning, CheckCircle } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import { useTwilioDevice } from "@/hooks/useTwilioDevice";
 
 const KEYS = ["1","2","3","4","5","6","7","8","9","*","0","#"];
 
@@ -11,43 +12,104 @@ export default function Calls() {
   const [history, setHistory] = useState([]);
   const [voiceConfig, setVoiceConfig] = useState(null);
   const [tab, setTab] = useState("dial");
+  const [callStart, setCallStart] = useState(null);
 
-  const loadAll = () => {
-    api.get("/voice/config").then(({ data }) => setVoiceConfig(data)).catch(() => {});
-    api.get("/users").then(({ data }) => setContacts(data)).catch(() => {});
-    api.get("/voice/call-history").then(({ data }) => setHistory(data)).catch(() => {});
+  const twilioEnabled = !!(voiceConfig && voiceConfig.enabled);
+  const { status, error, activeCall, incomingCall, makeCall, hangup, acceptIncoming, rejectIncoming } =
+    useTwilioDevice(twilioEnabled);
+
+  const loadConfig = async () => {
+    try {
+      const { data } = await api.get("/voice/config");
+      setVoiceConfig(data);
+    } catch {}
+  };
+  const loadContacts = async () => {
+    try { const { data } = await api.get("/users"); setContacts(data); } catch {}
+  };
+  const loadHistory = async () => {
+    try { const { data } = await api.get("/voice/call-history"); setHistory(data); } catch {}
   };
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => {
+    loadConfig(); loadContacts(); loadHistory();
+  }, []);
+
+  useEffect(() => {
+    if (status === "in-call" && !callStart) setCallStart(Date.now());
+    if (status === "ready" && callStart) {
+      const duration = Math.floor((Date.now() - callStart) / 1000);
+      api.post("/voice/call-log", {
+        to: number, to_name: "",
+        direction: "outbound", duration_seconds: duration, status: "completed",
+      }).then(loadHistory).catch(() => {});
+      setCallStart(null);
+    }
+  }, [status]); // eslint-disable-line
 
   const dial = async (target, targetName = "") => {
     if (!target) return;
-    if (voiceConfig && !voiceConfig.enabled) {
-      // Log a "missed/unavailable" entry so history reflects activity
+    if (!twilioEnabled) {
       await api.post("/voice/call-log", {
         to: target, to_name: targetName, direction: "outbound",
         duration_seconds: 0, status: "unavailable",
       });
-      toast.error("VoIP is currently disabled. Add Twilio credentials in backend .env to activate.");
-      loadAll();
+      toast.error(voiceConfig?.reason || "VoIP is disabled.");
+      loadHistory();
       return;
     }
-    // Simulated call when enabled (full Voice SDK wiring requires real keys + ngrok)
-    await api.post("/voice/call-log", {
-      to: target, to_name: targetName, direction: "outbound",
-      duration_seconds: 0, status: "completed",
-    });
-    toast.success(`Calling ${targetName || target}…`);
-    setNumber("+263");
-    loadAll();
+    if (status !== "ready") {
+      toast.error(status === "registering" ? "Calling is still connecting…" : `Not ready (${status})`);
+      return;
+    }
+    try {
+      setNumber(target);
+      await makeCall(target);
+      toast.success(`Calling ${targetName || target}…`);
+    } catch (e) {
+      toast.error(e?.message || "Call failed");
+      await api.post("/voice/call-log", {
+        to: target, to_name: targetName, direction: "outbound",
+        duration_seconds: 0, status: "failed",
+      });
+      loadHistory();
+    }
   };
+
+  const endCall = () => {
+    hangup();
+    api.post("/voice/call-log", {
+      to: number, to_name: "", direction: "outbound",
+      duration_seconds: callStart ? Math.floor((Date.now() - callStart) / 1000) : 0,
+      status: "completed",
+    }).then(loadHistory).catch(() => {});
+    setCallStart(null);
+  };
+
+  const statusLabel = {
+    idle: "Initializing…",
+    registering: "Connecting…",
+    ready: "Ready to call",
+    calling: "Ringing…",
+    "in-call": "On call",
+    error: error || "Error",
+  }[status] || status;
+
+  const statusColor = status === "ready" ? "bg-[#00E59B]" : status === "in-call" ? "bg-[#7F6BFF] text-white" : status === "error" ? "bg-[#FF453A] text-white" : "bg-white";
 
   return (
     <div className="space-y-6" data-testid="calls-page">
-      <div>
-        <p className="overline text-neutral-500">VOICE · ZIMBABWE +263</p>
-        <h1 className="text-5xl md:text-6xl font-black tracking-tighter mt-2">Calls.</h1>
-        <p className="text-sm text-neutral-700 mt-2">Cheap, crisp calls to any Zimbabwe landline or mobile.</p>
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-3">
+        <div>
+          <p className="overline text-neutral-500">VOICE · ZIMBABWE +263</p>
+          <h1 className="text-5xl md:text-6xl font-black tracking-tighter mt-2">Calls.</h1>
+          <p className="text-sm text-neutral-700 mt-2">Cheap, crisp calls to any Zimbabwe landline or mobile.</p>
+        </div>
+        {twilioEnabled && (
+          <span className={`nb-pill ${statusColor}`} data-testid="voice-status">
+            <CheckCircle size={12} weight="bold" /> {statusLabel}
+          </span>
+        )}
       </div>
 
       {voiceConfig && !voiceConfig.enabled && (
@@ -57,6 +119,35 @@ export default function Calls() {
             <p className="font-bold text-sm">VoIP is in scaffold mode.</p>
             <p className="text-xs text-neutral-700 mt-1">{voiceConfig.reason}</p>
           </div>
+        </div>
+      )}
+
+      {incomingCall && (
+        <div className="nb-card p-5 flex items-center justify-between bg-[#7F6BFF] text-white" data-testid="incoming-call">
+          <div>
+            <p className="overline">INCOMING</p>
+            <p className="text-2xl font-black mt-1">{incomingCall.parameters?.From || "Unknown caller"}</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={acceptIncoming} className="nb-btn bg-[#00E59B] text-black" data-testid="accept-incoming">
+              <Phone size={18} weight="fill" /> Accept
+            </button>
+            <button onClick={rejectIncoming} className="nb-btn bg-[#FF453A] text-white" data-testid="reject-incoming">
+              <PhoneDisconnect size={18} weight="bold" /> Reject
+            </button>
+          </div>
+        </div>
+      )}
+
+      {(status === "calling" || status === "in-call") && (
+        <div className="nb-card p-5 flex items-center justify-between bg-[#7F6BFF] text-white" data-testid="active-call-bar">
+          <div>
+            <p className="overline">{status === "calling" ? "RINGING" : "ON CALL"}</p>
+            <p className="text-2xl font-black mt-1 mono">{number}</p>
+          </div>
+          <button onClick={endCall} className="nb-btn bg-[#FF453A] text-white" data-testid="hangup-button">
+            <PhoneDisconnect size={18} weight="bold" /> End
+          </button>
         </div>
       )}
 
@@ -75,7 +166,7 @@ export default function Calls() {
       </div>
 
       {tab === "dial" && (
-        <div className="nb-card p-6 md:p-8 max-w-md mx-auto" style={{ backgroundColor: "white" }}>
+        <div className="nb-card p-6 md:p-8 max-w-md mx-auto bg-white">
           <div className="border-2 border-black rounded-xl px-5 py-4 mb-6 flex items-center justify-between bg-[#FDFBF7]">
             <input
               className="flex-1 bg-transparent text-3xl md:text-4xl font-black tracking-tighter mono outline-none placeholder:text-neutral-400"
@@ -107,12 +198,12 @@ export default function Calls() {
           </div>
           <button
             onClick={() => dial(number, "")}
-            disabled={!number}
+            disabled={!number || status === "calling" || status === "in-call"}
             className="nb-btn w-full mt-5 h-14 text-base text-white"
             style={{ backgroundColor: ACCENTS.calling }}
             data-testid="dialpad-call-button"
           >
-            <Phone size={22} weight="fill" /> Call
+            <Phone size={22} weight="fill" /> {status === "calling" ? "Ringing…" : "Call"}
           </button>
         </div>
       )}
@@ -151,10 +242,17 @@ export default function Calls() {
             <div key={h.id} className="nb-card p-4 flex items-center justify-between">
               <div>
                 <p className="font-bold">{h.to_name || h.to}</p>
-                <p className="text-xs text-neutral-500 mono">{new Date(h.created_at).toLocaleString()}</p>
+                <p className="text-xs text-neutral-500 mono">
+                  {new Date(h.created_at).toLocaleString()}
+                  {h.duration_seconds ? ` · ${Math.floor(h.duration_seconds/60)}m ${h.duration_seconds%60}s` : ""}
+                </p>
               </div>
-              <span className={`nb-pill ${h.status === "unavailable" ? "bg-[#FF453A] text-white" : "bg-[#00E59B]"}`}>
-                {h.status === "unavailable" ? <X size={12} weight="bold" /> : null} {h.status}
+              <span className={`nb-pill ${
+                h.status === "completed" ? "bg-[#00E59B]" :
+                h.status === "failed" ? "bg-[#FF453A] text-white" :
+                "bg-[#FFC900]"
+              }`}>
+                {h.status}
               </span>
             </div>
           ))}

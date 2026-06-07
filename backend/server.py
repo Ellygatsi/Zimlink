@@ -407,6 +407,33 @@ async def voice_token(current=Depends(get_current_user)):
         jwt_token = jwt_token.decode("utf-8")
     return {"token": jwt_token, "identity": current["id"]}
 
+@api.api_route("/voice/twiml", methods=["POST", "GET"])
+async def voice_twiml(request: Request):
+    """TwiML endpoint Twilio calls to know how to handle an outgoing browser call.
+    Twilio sends form-encoded params; we read 'To' and dial it as a PSTN number
+    if it starts with '+', otherwise treat as a Voice SDK client identity."""
+    from twilio.twiml.voice_response import VoiceResponse, Dial
+    form = {}
+    try:
+        form_data = await request.form()
+        form = dict(form_data)
+    except Exception:
+        pass
+    to_value = (form.get("To") or request.query_params.get("To") or "").strip()
+    response = VoiceResponse()
+    if not to_value:
+        response.say("No destination specified.")
+        return Response(content=str(response), media_type="text/xml")
+    caller_id = os.environ.get("TWILIO_VOICE_CALLER_ID", "")
+    dial = Dial(caller_id=caller_id, answer_on_bridge=True, timeout=30)
+    if to_value.startswith("+") and len(to_value) >= 8:
+        dial.number(to_value)
+    else:
+        dial.client(to_value)
+    response.append(dial)
+    return Response(content=str(response), media_type="text/xml")
+
+
 @api.post("/voice/call-log")
 async def log_call(payload: dict, current=Depends(get_current_user)):
     entry = {
