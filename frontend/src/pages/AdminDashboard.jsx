@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api, { ACCENTS } from "@/lib/api";
-import { CurrencyDollar, Phone, ChartLineUp, Users, Sliders, Clock } from "@phosphor-icons/react";
+import { CurrencyDollar, Phone, ChartLineUp, Users, Sliders, Clock, Gear } from "@phosphor-icons/react";
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState(null);
@@ -50,6 +50,9 @@ export default function AdminDashboard() {
           ))}
           <Link to="/admin/rates" className="nb-btn text-sm bg-white" data-testid="manage-rates-link">
             <Sliders size={16} weight="bold" /> Rates
+          </Link>
+          <Link to="/admin/settings" className="nb-btn text-sm bg-white" data-testid="manage-settings-link">
+            <Gear size={16} weight="bold" /> Settings
           </Link>
         </div>
       </div>

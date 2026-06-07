@@ -13,6 +13,7 @@ import MarketplaceDetail from "@/pages/MarketplaceDetail";
 import Community from "@/pages/Community";
 import AdminDashboard from "@/pages/AdminDashboard";
 import AdminRates from "@/pages/AdminRates";
+import AdminSettings from "@/pages/AdminSettings";
 import AdminGuard from "@/components/AdminGuard";
 import "@/App.css";
 
@@ -51,6 +52,7 @@ function App() {
           <Route path="/community" element={<Protected><Community /></Protected>} />
           <Route path="/admin" element={<Protected><AdminGuard><AdminDashboard /></AdminGuard></Protected>} />
           <Route path="/admin/rates" element={<Protected><AdminGuard><AdminRates /></AdminGuard></Protected>} />
+          <Route path="/admin/settings" element={<Protected><AdminGuard><AdminSettings /></AdminGuard></Protected>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

@@ -168,8 +168,9 @@ async def register(data: RegisterIn, response: Response):
         "name": data.name,
         "password_hash": hash_password(data.password),
         "avatar_url": "",
-        "wallet_balance": 100.0,  # starter bonus
+        "wallet_balance": 0.0,
         "phone": "",
+        "is_admin": False,
         "created_at": now_iso(),
     }
     await db.users.insert_one(user)
@@ -255,6 +256,201 @@ async def transactions(current=Depends(get_current_user)):
         {"$or": [{"from_id": uid}, {"to_id": uid}]}, {"_id": 0}
     ).sort("created_at", -1).to_list(200)
     return txs
+
+
+# ----- Stripe Wallet Top-up -----
+async def get_app_settings() -> dict:
+    s = await db.app_settings.find_one({"id": "global"}, {"_id": 0})
+    if not s:
+        s = {
+            "id": "global",
+            "deposit_fee_percent": 3.0,
+            "min_topup": 5.0,
+            "max_topup": 500.0,
+            "topup_packages": [5.0, 10.0, 25.0, 50.0, 100.0, 250.0],
+        }
+        await db.app_settings.insert_one(s)
+        s.pop("_id", None)
+    return s
+
+
+@api.get("/wallet/topup/packages")
+async def list_topup_packages(current=Depends(get_current_user)):
+    s = await get_app_settings()
+    fee_pct = float(s.get("deposit_fee_percent", 0.0))
+    packages = []
+    for amt in s.get("topup_packages", []):
+        amt_f = float(amt)
+        fee = round(amt_f * fee_pct / 100.0, 2)
+        credited = round(amt_f - fee, 2)
+        packages.append({
+            "amount": amt_f,
+            "fee": fee,
+            "credited": credited,
+        })
+    return {
+        "deposit_fee_percent": fee_pct,
+        "packages": packages,
+        "min_topup": s.get("min_topup", 5.0),
+        "max_topup": s.get("max_topup", 500.0),
+    }
+
+
+class TopUpRequest(BaseModel):
+    package_amount: float = Field(gt=0)
+    origin_url: str
+
+
+@api.post("/wallet/topup/checkout")
+async def create_topup_checkout(data: TopUpRequest, request: Request, current=Depends(get_current_user)):
+    s = await get_app_settings()
+    # SECURITY: validate amount is in the allow-listed packages (server-side definition only)
+    allowed = [float(a) for a in s.get("topup_packages", [])]
+    amt = float(data.package_amount)
+    if amt not in allowed:
+        raise HTTPException(status_code=400, detail="Invalid package amount")
+
+    fee_pct = float(s.get("deposit_fee_percent", 0.0))
+    fee_amount = round(amt * fee_pct / 100.0, 2)
+    credited = round(amt - fee_amount, 2)
+
+    from emergentintegrations.payments.stripe.checkout import (
+        StripeCheckout, CheckoutSessionRequest
+    )
+    api_key = os.environ["STRIPE_API_KEY"]
+    host_url = str(request.base_url)
+    webhook_url = f"{host_url}api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=api_key, webhook_url=webhook_url)
+
+    origin = data.origin_url.rstrip("/")
+    success_url = f"{origin}/wallet?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/wallet?cancelled=1"
+
+    metadata = {
+        "user_id": current["id"],
+        "user_email": current["email"],
+        "amount": str(amt),
+        "fee_amount": str(fee_amount),
+        "credited_amount": str(credited),
+        "purpose": "wallet_topup",
+    }
+
+    session_req = CheckoutSessionRequest(
+        amount=amt,
+        currency="usd",
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata=metadata,
+    )
+    session = await stripe_checkout.create_checkout_session(session_req)
+
+    # MANDATORY: insert payment_transactions row before redirecting
+    tx = {
+        "id": new_id(),
+        "user_id": current["id"],
+        "user_email": current["email"],
+        "session_id": session.session_id,
+        "package_amount": amt,
+        "fee_amount": fee_amount,
+        "credited_amount": credited,
+        "currency": "usd",
+        "status": "initiated",
+        "payment_status": "unpaid",
+        "metadata": metadata,
+        "created_at": now_iso(),
+        "completed_at": None,
+    }
+    await db.payment_transactions.insert_one(tx)
+
+    return {"url": session.url, "session_id": session.session_id}
+
+
+async def _process_completed_payment(session_id: str) -> dict:
+    """Idempotently credit the user's wallet on a successful payment.
+    Returns the up-to-date payment_transactions row."""
+    from emergentintegrations.payments.stripe.checkout import StripeCheckout
+
+    tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if tx.get("payment_status") == "paid":
+        return tx  # already credited; idempotent
+
+    api_key = os.environ["STRIPE_API_KEY"]
+    stripe_checkout = StripeCheckout(api_key=api_key, webhook_url="")
+    status_info = await stripe_checkout.get_checkout_status(session_id)
+
+    new_status = tx["status"]
+    new_payment_status = tx["payment_status"]
+    completed_at = tx.get("completed_at")
+
+    if status_info.payment_status == "paid":
+        # Atomic update: only credit once
+        result = await db.payment_transactions.update_one(
+            {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+            {"$set": {
+                "status": "completed",
+                "payment_status": "paid",
+                "completed_at": now_iso(),
+            }},
+        )
+        if result.modified_count == 1:
+            # Credit the user's wallet
+            await db.users.update_one(
+                {"id": tx["user_id"]},
+                {"$inc": {"wallet_balance": float(tx["credited_amount"])}},
+            )
+        new_status = "completed"
+        new_payment_status = "paid"
+        completed_at = now_iso()
+    elif status_info.status == "expired":
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {"$set": {"status": "expired"}},
+        )
+        new_status = "expired"
+
+    return {**tx, "status": new_status, "payment_status": new_payment_status, "completed_at": completed_at}
+
+
+@api.get("/wallet/topup/status/{session_id}")
+async def topup_status(session_id: str, current=Depends(get_current_user)):
+    tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not tx or tx["user_id"] != current["id"]:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    updated = await _process_completed_payment(session_id)
+    return {
+        "status": updated["status"],
+        "payment_status": updated["payment_status"],
+        "amount": updated["package_amount"],
+        "credited": updated["credited_amount"],
+        "fee": updated["fee_amount"],
+    }
+
+
+@api.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    from emergentintegrations.payments.stripe.checkout import StripeCheckout
+    api_key = os.environ["STRIPE_API_KEY"]
+    stripe_checkout = StripeCheckout(api_key=api_key, webhook_url="")
+    body = await request.body()
+    sig = request.headers.get("Stripe-Signature", "")
+    try:
+        event = await stripe_checkout.handle_webhook(body, sig)
+        if event.session_id and event.payment_status == "paid":
+            await _process_completed_payment(event.session_id)
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        raise HTTPException(status_code=400, detail="Webhook handling failed")
+
+
+@api.get("/wallet/topup/history")
+async def topup_history(current=Depends(get_current_user)):
+    items = await db.payment_transactions.find(
+        {"user_id": current["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(100)
+    return items
 
 
 # ----- Marketplace -----
@@ -712,6 +908,54 @@ async def admin_credit_user(user_id: str, payload: dict, _=Depends(require_admin
     return user
 
 
+# ----- Admin: app settings (deposit fees & top-up packages) -----
+class SettingsIn(BaseModel):
+    deposit_fee_percent: Optional[float] = Field(default=None, ge=0, le=100)
+    min_topup: Optional[float] = Field(default=None, ge=1)
+    max_topup: Optional[float] = Field(default=None, ge=1)
+    topup_packages: Optional[List[float]] = None
+
+
+@api.get("/admin/settings")
+async def admin_get_settings(_=Depends(require_admin)):
+    return await get_app_settings()
+
+
+@api.put("/admin/settings")
+async def admin_update_settings(data: SettingsIn, _=Depends(require_admin)):
+    update = {k: v for k, v in data.model_dump(exclude_none=True).items()}
+    if not update:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    if "topup_packages" in update:
+        update["topup_packages"] = sorted([float(a) for a in update["topup_packages"] if float(a) > 0])
+    await db.app_settings.update_one(
+        {"id": "global"}, {"$set": update}, upsert=True,
+    )
+    return await get_app_settings()
+
+
+@api.get("/admin/topup-stats")
+async def admin_topup_stats(days: int = 30, _=Depends(require_admin)):
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    pipeline = [
+        {"$match": {"created_at": {"$gte": cutoff}, "payment_status": "paid"}},
+        {"$group": {
+            "_id": None,
+            "count": {"$sum": 1},
+            "gross": {"$sum": "$package_amount"},
+            "fees": {"$sum": "$fee_amount"},
+            "credited": {"$sum": "$credited_amount"},
+        }},
+    ]
+    agg = await db.payment_transactions.aggregate(pipeline).to_list(1)
+    summary = agg[0] if agg else {"count": 0, "gross": 0.0, "fees": 0.0, "credited": 0.0}
+    summary.pop("_id", None)
+    recent = await db.payment_transactions.find(
+        {}, {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    return {"window_days": days, "summary": summary, "recent": recent}
+
+
 # ----- App config / startup -----
 app.include_router(api)
 app.add_middleware(
@@ -736,10 +980,10 @@ async def on_startup():
     await db.call_rates.create_index("prefix", unique=True)
 
     admin_email = os.environ.get("ADMIN_EMAIL", "").lower()
-    # Seed admin & test user
+    # Seed admin & test user (no starter balance; users must top up via Stripe)
     for email_key, pw_key, name, balance, is_admin in [
-        ("ADMIN_EMAIL", "ADMIN_PASSWORD", "Admin", 1000.0, True),
-        ("TEST_USER_EMAIL", "TEST_USER_PASSWORD", "Test User", 500.0, False),
+        ("ADMIN_EMAIL", "ADMIN_PASSWORD", "Admin", 0.0, True),
+        ("TEST_USER_EMAIL", "TEST_USER_PASSWORD", "Test User", 0.0, False),
     ]:
         email = os.environ.get(email_key, "").lower()
         password = os.environ.get(pw_key, "")
