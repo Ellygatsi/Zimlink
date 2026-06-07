@@ -175,12 +175,18 @@ async def get_balance(current=Depends(get_current_user)):
 
 @api.post("/wallet/send")
 async def send_money(data: SendMoneyIn, current=Depends(get_current_user)):
-    recipient = await db.users.find_one({"email": data.recipient_email.lower()})
+    recipient = await db.users.find_one(
+        {"email": data.recipient_email.lower()},
+        {"_id": 0, "id": 1, "name": 1, "email": 1},
+    )
     if not recipient:
         raise HTTPException(status_code=404, detail="Recipient not found")
     if recipient["id"] == current["id"]:
         raise HTTPException(status_code=400, detail="Cannot send to yourself")
-    sender = await db.users.find_one({"id": current["id"]})
+    sender = await db.users.find_one(
+        {"id": current["id"]},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "wallet_balance": 1},
+    )
     if sender["wallet_balance"] < data.amount:
         raise HTTPException(status_code=400, detail="Insufficient balance")
     await db.users.update_one({"id": sender["id"]}, {"$inc": {"wallet_balance": -data.amount}})
@@ -251,7 +257,7 @@ async def get_listing(listing_id: str):
 
 @api.delete("/marketplace/listings/{listing_id}")
 async def delete_listing(listing_id: str, current=Depends(get_current_user)):
-    item = await db.listings.find_one({"id": listing_id})
+    item = await db.listings.find_one({"id": listing_id}, {"_id": 0, "seller_id": 1})
     if not item:
         raise HTTPException(status_code=404, detail="Not found")
     if item["seller_id"] != current["id"]:
@@ -284,18 +290,20 @@ async def get_posts():
 
 @api.post("/community/posts/{post_id}/like")
 async def like_post(post_id: str, current=Depends(get_current_user)):
-    post = await db.posts.find_one({"id": post_id})
+    post = await db.posts.find_one({"id": post_id}, {"_id": 0, "likes": 1})
     if not post:
         raise HTTPException(status_code=404, detail="Not found")
     uid = current["id"]
-    if uid in post.get("likes", []):
+    current_likes = post.get("likes", [])
+    if uid in current_likes:
         await db.posts.update_one({"id": post_id}, {"$pull": {"likes": uid}})
+        likes_count = len(current_likes) - 1
         liked = False
     else:
         await db.posts.update_one({"id": post_id}, {"$addToSet": {"likes": uid}})
+        likes_count = len(current_likes) + 1
         liked = True
-    updated = await db.posts.find_one({"id": post_id}, {"_id": 0})
-    return {"liked": liked, "likes_count": len(updated.get("likes", []))}
+    return {"liked": liked, "likes_count": likes_count}
 
 @api.get("/community/posts/{post_id}/comments")
 async def get_comments(post_id: str):
@@ -304,7 +312,7 @@ async def get_comments(post_id: str):
 
 @api.post("/community/posts/{post_id}/comments")
 async def add_comment(post_id: str, data: CommentIn, current=Depends(get_current_user)):
-    post = await db.posts.find_one({"id": post_id})
+    post = await db.posts.find_one({"id": post_id}, {"_id": 0, "id": 1})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     c = {
@@ -347,7 +355,7 @@ async def channel_messages(channel_id: str):
 
 @api.post("/community/channels/{channel_id}/messages")
 async def post_channel_message(channel_id: str, data: MessageIn, current=Depends(get_current_user)):
-    chan = await db.channels.find_one({"id": channel_id})
+    chan = await db.channels.find_one({"id": channel_id}, {"_id": 0, "id": 1})
     if not chan:
         raise HTTPException(status_code=404, detail="Channel not found")
     m = {
