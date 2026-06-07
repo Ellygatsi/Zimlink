@@ -1,0 +1,98 @@
+{
+  "theme": "Light",
+  "archetype": "Neo-Brutalist Pop (Custom hybrid of Swiss High-Contrast & Pastel Soft)",
+  "design_philosophy": "A bold, tactile, high-contrast 'anti-design' super-app that avoids the generic SaaS aesthetic. Uses strong black borders, solid drop shadows, and expressive typography to create distinct identities for its 4 core modules (VoIP, Money, Market, Community) while keeping them united under one aggressive, fun design language.",
+  "colors": {
+    "background": "#FDFBF7",
+    "surface": "#FFFFFF",
+    "text_primary": "#0A0A0A",
+    "text_secondary": "#525252",
+    "border": "#0A0A0A",
+    "accents": {
+      "wallet": "#00E59B",
+      "calling": "#7F6BFF",
+      "marketplace": "#FF90E8",
+      "community": "#FFC900",
+      "alert": "#FF453A",
+      "neutral": "#E5E5E5"
+    }
+  },
+  "typography": {
+    "headings": "Cabinet Grotesk",
+    "body": "Satoshi",
+    "monospace": "JetBrains Mono",
+    "rules": [
+      "NO INTER allowed under any circumstances.",
+      "Headings must use tracking-tighter and leading-none.",
+      "Overlines/labels must be Uppercase, text-xs, with tracking-[0.2em].",
+      "Wallet balances use massive fluid typography (text-5xl md:text-7xl).",
+      "Keep a heavy weight contrast: Use font-black for module titles and font-medium for body."
+    ]
+  },
+  "spacing_and_layout": {
+    "container_padding": "p-6 md:p-8",
+    "bento_grid": "gap-4 md:gap-6",
+    "border_radius": "rounded-xl",
+    "borders": "border-2 border-black",
+    "shadows": {
+      "default": "shadow-[4px_4px_0px_rgba(0,0,0,1)]",
+      "hover": "shadow-[6px_6px_0px_rgba(0,0,0,1)]",
+      "active": "shadow-[0px_0px_0px_rgba(0,0,0,1)]"
+    }
+  },
+  "navigation": {
+    "structure": "Unified hub model.",
+    "desktop": "Left-side navigation bar (w-20 md:w-64) with high-contrast icon buttons. Active state uses module's accent color.",
+    "mobile": "Fixed bottom navigation bar with 5 tabs (Home, Calls, Wallet, Market, Community). Top border is border-t-2 border-black. Active icon fills with accent color."
+  },
+  "component_guidelines": {
+    "buttons": "Thick 2px black borders, solid accent background colors, hard 4px black shadow. On hover: -translate-y-1, shadow increases. On active/click: translate-y-1, shadow goes to 0.",
+    "cards": "White or specific accent backgrounds, 2px black borders, solid drop shadows. Padding p-6 or p-8. No soft/blurry drop shadows anywhere.",
+    "inputs": "Shadcn UI overrides: border-2 border-black focus:ring-0 focus:border-black rounded-xl bg-white h-12 text-black placeholder:text-gray-500.",
+    "tabs": "Blocky, separated pill tabs. Active tab gets a bright accent background (e.g., #FF90E8) and 2px black border with shadow.",
+    "avatars": "Circular or rounded-xl with 2px solid black border. Size varies from w-10 (feed) to w-24 (profile)."
+  },
+  "key_screens": {
+    "dashboard_home": "The 'Super Hub'. Bento-style grid. Massive 'Welcome' header. Quick-access modules: Wallet Balance (green card), Recent Calls (blue card), Top Market Item (pink card), Latest Community Post (yellow card).",
+    "wallet_money": "Centralized giant balance in Cabinet Grotesk. Large 50/50 split buttons for 'Send' and 'Request'. Transaction history list below with distinct + (Green) / - (Black) amounts.",
+    "calling_voip": "Clean oversized dialpad with circular keys, thick borders, and hover states. High-contrast bold numbers. Visual contact list with status indicators (green dots).",
+    "marketplace": "Masonry or grid layout (grid-cols-2 md:grid-cols-3 lg:grid-cols-4). Product images sit inside 2px bordered containers. High-contrast price pills overlaid on top-right of images.",
+    "community_feed": "Feed-style vertical layout. Post cards with bold user names. Upvote/downvote buttons use bold Phosphor icons. Clear dividers (border-b-2 border-black) between comments."
+  },
+  "motion_and_interactions": {
+    "hover": "Elements scale up slightly or translate-y-[-4px], hard shadow distance increases.",
+    "active": "Elements push down (translate-y-[4px]), shadow reduces to 0px, mimicking physical retro buttons.",
+    "transitions": "Fast, snappy, mechanical transitions (duration-150 ease-out). No slow fades."
+  },
+  "icons": {
+    "library": "@phosphor-icons/react",
+    "weight": "bold",
+    "instructions": "yarn add @phosphor-icons/react"
+  },
+  "accessibility_and_testing": {
+    "data_testid": "ALL interactive elements MUST include a data-testid attribute in kebab-case (e.g., data-testid='wallet-send-button', data-testid='dialpad-button-5').",
+    "contrast": "Maintain 4.5:1 minimum contrast. Dark text on bright pastel accents guarantees high visibility."
+  },
+  "image_urls": [
+    {
+      "category": "user_avatars",
+      "description": "Diverse user avatars for calling and community contacts.",
+      "urls": [
+        "https://images.unsplash.com/photo-1772242859666-67d57946c3a8?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODl8MHwxfHNlYXJjaHw0fHxwb3J0cmFpdCUyMGRpdmVyc2UlMjB5b3VuZyUyMHBlb3BsZSUyMHNtaWxpbmd8ZW58MHx8fHwxNzgwODMzMDg3fDA&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1772723246507-e58357fcf6be?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODl8MHwxfHNlYXJjaHwxfHxwb3J0cmFpdCUyMGRpdmVyc2UlMjB5b3VuZyUyMHBlb3BsZSUyMHNtaWxpbmd8ZW58MHx8fHwxNzgwODMzMDg3fDA&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1772242859584-f455e5fd45db?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODl8MHwxfHNlYXJjaHwyfHxwb3J0cmFpdCUyMGRpdmVyc2UlMjB5b3VuZyUyMHBlb3BsZSUyMHNtaWxpbmd8ZW58MHx8fHwxNzgwODMzMDg3fDA&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1772723246436-ce9c917b3ba7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODl8MHwxfHNlYXJjaHwzfHxwb3J0cmFpdCUyMGRpdmVyc2UlMjB5b3VuZyUyMHBlb3BsZSUyMHNtaWxpbmd8ZW58MHx8fHwxNzgwODMzMDg3fDA&ixlib=rb-4.1.0&q=85"
+      ]
+    },
+    {
+      "category": "marketplace_items",
+      "description": "Tech gadgets and lifestyle products for the marketplace.",
+      "urls": [
+        "https://images.unsplash.com/photo-1636115305669-9096bffe87fd?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1NzZ8MHwxfHNlYXJjaHw0fHxtb2Rlcm4lMjBsaWZlc3R5bGUlMjBwcm9kdWN0cyUyMHRlY2glMjBnYWRnZXRzfGVufDB8fHx8MTc4MDgzMzA4N3ww&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1615655406736-b37c4fabf923?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1NzZ8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBsaWZlc3R5bGUlMjBwcm9kdWN0cyUyMHRlY2glMjBnYWRnZXRzfGVufDB8fHx8MTc4MDgzMzA4N3ww&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1515940175183-6798529cb860?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1NzZ8MHwxfHNlYXJjaHwzfHxtb2Rlcm4lMjBsaWZlc3R5bGUlMjBwcm9kdWN0cyUyMHRlY2glMjBnYWRnZXRzfGVufDB8fHx8MTc4MDgzMzA4N3ww&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1595303526913-c7037797ebe7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1NzZ8MHwxfHNlYXJjaHwyfHxtb2Rlcm4lMjBsaWZlc3R5bGUlMjBwcm9kdWN0cyUyMHRlY2glMjBnYWRnZXRzfGVufDB8fHx8MTc4MDgzMzA4N3ww&ixlib=rb-4.1.0&q=85"
+      ]
+    }
+  ]
+}
