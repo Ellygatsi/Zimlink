@@ -63,7 +63,7 @@ export default function Home() {
         {/* Community */}
         <Link
           to="/community"
-          className="nb-card p-6 transition-all hover:-translate-y-1 hover:shadow-[6px_6px_0px_rgba(0,0,0,1)]"
+          className="nb-card p-6 transition-all hover:-translate-y-1 hover:shadow-[6px_6px_0px_rgba(0,0,0,1)] text-white"
           style={{ backgroundColor: ACCENTS.community }}
           data-testid="home-community-tile"
         >
@@ -76,7 +76,7 @@ export default function Home() {
         {/* Marketplace */}
         <Link
           to="/marketplace"
-          className="nb-card p-6 md:col-span-3 transition-all hover:-translate-y-1 hover:shadow-[6px_6px_0px_rgba(0,0,0,1)]"
+          className="nb-card p-6 md:col-span-3 transition-all hover:-translate-y-1 hover:shadow-[6px_6px_0px_rgba(0,0,0,1)] text-white"
           style={{ backgroundColor: ACCENTS.marketplace }}
           data-testid="home-marketplace-tile"
         >

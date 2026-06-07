@@ -86,7 +86,7 @@ export default function AdminRates() {
               Set what you charge per minute, per destination. Longest-prefix wins. Margin = (rate − cost) × minutes.
             </p>
           </div>
-          <button onClick={() => setShowNew(true)} className="nb-btn text-black" style={{ backgroundColor: ACCENTS.community }} data-testid="add-rate-button">
+          <button onClick={() => setShowNew(true)} className="nb-btn text-white" style={{ backgroundColor: ACCENTS.community }} data-testid="add-rate-button">
             <Plus size={18} weight="bold" /> Add Rate
           </button>
         </div>
@@ -148,12 +148,12 @@ export default function AdminRates() {
                         data-testid={`rate-cost-${r.id}`}
                       />
                     </td>
-                    <td className={`px-4 py-3 text-right font-black mono ${rate - cost < 0 ? "text-[#FF453A]" : "text-[#00A66E]"}`}>
+                    <td className={`px-4 py-3 text-right font-black mono ${rate - cost < 0 ? "text-[#DE2010]" : "text-[#009639]"}`}>
                       ${margin}
                     </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       {dirty && (
-                        <button onClick={() => save(r.id)} className="nb-btn text-xs bg-[#00E59B] mr-1" data-testid={`save-rate-${r.id}`}>
+                        <button onClick={() => save(r.id)} className="nb-btn text-xs bg-[#009639] text-white mr-1" data-testid={`save-rate-${r.id}`}>
                           <FloppyDisk size={14} weight="bold" /> Save
                         </button>
                       )}
@@ -197,7 +197,7 @@ export default function AdminRates() {
                 <input type="number" step="0.001" min="0" required className="nb-input mt-2 mono" value={form.cost_per_minute} onChange={(e) => setForm({ ...form, cost_per_minute: e.target.value })} data-testid="new-rate-cost" />
               </div>
             </div>
-            <button className="nb-btn w-full h-12" style={{ backgroundColor: ACCENTS.community }} data-testid="new-rate-submit">
+            <button className="nb-btn w-full h-12 text-white" style={{ backgroundColor: ACCENTS.community }} data-testid="new-rate-submit">
               Create rate
             </button>
           </form>

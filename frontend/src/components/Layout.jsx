@@ -25,11 +25,18 @@ export default function Layout({ children }) {
   const navItems = user?.is_admin ? [...NAV, ADMIN_NAV] : NAV;
 
   return (
-    <div className="min-h-screen bg-[#FDFBF7] text-black">
+    <div className="min-h-screen text-black">
+      {/* Zimbabwean flag stripe — global accent */}
+      <div className="fixed top-0 left-0 right-0 z-[60] flex h-[4px]">
+        <div className="flex-1" style={{ background: "#009639" }} />
+        <div className="flex-1" style={{ background: "#FFCD00" }} />
+        <div className="flex-1" style={{ background: "#DE2010" }} />
+        <div className="flex-1" style={{ background: "#0A0A0A" }} />
+      </div>
       {/* Desktop sidebar */}
-      <aside className="hidden md:flex flex-col fixed left-0 top-0 h-screen w-64 border-r-2 border-black bg-white p-6 z-40">
+      <aside className="hidden md:flex flex-col fixed left-0 top-0 h-screen w-64 border-r-2 border-black bg-white/95 backdrop-blur-sm p-6 pt-8 z-40">
         <div className="mb-10">
-          <h1 className="text-3xl font-black tracking-tighter">ZIM<span className="text-[#FFC900]">·</span>LINK</h1>
+          <h1 className="text-3xl font-black tracking-tighter">ZIM<span className="text-[#FFCD00]">·</span>LINK</h1>
           <p className="overline text-neutral-500 mt-1">CALL ZIMBABWE</p>
         </div>
         <nav className="flex flex-col gap-2 flex-1">
@@ -46,7 +53,7 @@ export default function Layout({ children }) {
                     : "shadow-none bg-white hover:-translate-y-0.5 hover:shadow-[4px_4px_0px_rgba(0,0,0,1)]"
                 }`
               }
-              style={({ isActive }) => isActive ? { backgroundColor: item.color, color: item.color === "#FFC900" || item.color === "#00E59B" ? "#0A0A0A" : "#FFFFFF" } : {}}
+              style={({ isActive }) => isActive ? { backgroundColor: item.color, color: item.color === "#FFCD00" ? "#0A0A0A" : "#FFFFFF" } : {}}
             >
               <item.icon size={20} weight="bold" />
               <span>{item.label}</span>
@@ -55,7 +62,7 @@ export default function Layout({ children }) {
         </nav>
         <div className="mt-auto pt-4 border-t-2 border-black">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-full border-2 border-black bg-[#FFC900] flex items-center justify-center font-black">
+            <div className="w-10 h-10 rounded-full border-2 border-black bg-[#FFCD00] flex items-center justify-center font-black">
               {user?.name?.[0]?.toUpperCase() || "U"}
             </div>
             <div className="flex-1 min-w-0">
@@ -74,8 +81,8 @@ export default function Layout({ children }) {
       </aside>
 
       {/* Mobile top bar */}
-      <header className="md:hidden sticky top-0 z-40 bg-white border-b-2 border-black px-5 py-4 flex justify-between items-center">
-        <h1 className="text-xl font-black tracking-tighter">ZIM<span className="text-[#FFC900]">·</span>LINK</h1>
+      <header className="md:hidden sticky top-[4px] z-40 bg-white/95 backdrop-blur-sm border-b-2 border-black px-5 py-4 flex justify-between items-center">
+        <h1 className="text-xl font-black tracking-tighter">ZIM<span className="text-[#FFCD00]">·</span>LINK</h1>
         <button onClick={handleLogout} className="text-xs font-bold uppercase tracking-wider" data-testid="logout-button-mobile">
           Exit
         </button>

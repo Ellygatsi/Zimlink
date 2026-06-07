@@ -123,7 +123,7 @@ export default function Calls() {
     error: error || "Error",
   }[status] || status;
 
-  const statusColor = status === "ready" ? "bg-[#00E59B]" : status === "in-call" ? "bg-[#7F6BFF] text-white" : status === "error" ? "bg-[#FF453A] text-white" : "bg-white";
+  const statusColor = status === "ready" ? "bg-[#009639] text-white" : status === "in-call" ? "bg-[#FFCD00]" : status === "error" ? "bg-[#DE2010] text-white" : "bg-white";
 
   return (
     <div className="space-y-6" data-testid="calls-page">
@@ -141,7 +141,7 @@ export default function Calls() {
       </div>
 
       {voiceConfig && !voiceConfig.enabled && (
-        <div className="nb-card p-4 flex items-start gap-3 bg-[#FFC900]/40" data-testid="voip-banner">
+        <div className="nb-card p-4 flex items-start gap-3 bg-[#FFCD00]/60 backdrop-blur-sm" data-testid="voip-banner">
           <Warning size={24} weight="bold" />
           <div className="flex-1">
             <p className="font-bold text-sm">VoIP is in scaffold mode.</p>
@@ -151,16 +151,16 @@ export default function Calls() {
       )}
 
       {incomingCall && (
-        <div className="nb-card p-5 flex items-center justify-between bg-[#7F6BFF] text-white" data-testid="incoming-call">
+        <div className="nb-card p-5 flex items-center justify-between bg-[#009639] text-white" data-testid="incoming-call">
           <div>
             <p className="overline">INCOMING</p>
             <p className="text-2xl font-black mt-1">{incomingCall.parameters?.From || "Unknown caller"}</p>
           </div>
           <div className="flex gap-2">
-            <button onClick={acceptIncoming} className="nb-btn bg-[#00E59B] text-black" data-testid="accept-incoming">
+            <button onClick={acceptIncoming} className="nb-btn bg-[#FFCD00] text-black" data-testid="accept-incoming">
               <Phone size={18} weight="fill" /> Accept
             </button>
-            <button onClick={rejectIncoming} className="nb-btn bg-[#FF453A] text-white" data-testid="reject-incoming">
+            <button onClick={rejectIncoming} className="nb-btn bg-[#DE2010] text-white" data-testid="reject-incoming">
               <PhoneDisconnect size={18} weight="bold" /> Reject
             </button>
           </div>
@@ -168,12 +168,12 @@ export default function Calls() {
       )}
 
       {(status === "calling" || status === "in-call") && (
-        <div className="nb-card p-5 flex items-center justify-between bg-[#7F6BFF] text-white" data-testid="active-call-bar">
+        <div className="nb-card p-5 flex items-center justify-between bg-[#009639] text-white" data-testid="active-call-bar">
           <div>
             <p className="overline">{status === "calling" ? "RINGING" : "ON CALL"}</p>
             <p className="text-2xl font-black mt-1 mono">{number}</p>
           </div>
-          <button onClick={endCall} className="nb-btn bg-[#FF453A] text-white" data-testid="hangup-button">
+          <button onClick={endCall} className="nb-btn bg-[#DE2010] text-white" data-testid="hangup-button">
             <PhoneDisconnect size={18} weight="bold" /> End
           </button>
         </div>
@@ -253,7 +253,7 @@ export default function Calls() {
           {contacts.map((c) => (
             <div key={c.id} className="nb-card p-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full border-2 border-black bg-[#7F6BFF] text-white flex items-center justify-center font-black">
+                <div className="w-12 h-12 rounded-full border-2 border-black bg-[#009639] text-white flex items-center justify-center font-black">
                   {c.name?.[0]?.toUpperCase()}
                 </div>
                 <div>
@@ -287,9 +287,9 @@ export default function Calls() {
                 </p>
               </div>
               <span className={`nb-pill ${
-                h.status === "completed" ? "bg-[#00E59B]" :
-                h.status === "failed" ? "bg-[#FF453A] text-white" :
-                "bg-[#FFC900]"
+                h.status === "completed" ? "bg-[#009639] text-white" :
+                h.status === "failed" ? "bg-[#DE2010] text-white" :
+                "bg-[#FFCD00]"
               }`}>
                 {h.status}
               </span>

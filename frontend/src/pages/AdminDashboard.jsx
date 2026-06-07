@@ -142,7 +142,7 @@ export default function AdminDashboard() {
             {stats.top_callers.map((c, i) => (
               <div key={c.user_id} className="flex items-center justify-between py-2 border-b-2 border-black last:border-0">
                 <div className="flex items-center gap-3">
-                  <span className="w-8 h-8 border-2 border-black rounded-full bg-[#FFC900] flex items-center justify-center font-black text-sm">
+                  <span className="w-8 h-8 border-2 border-black rounded-full bg-[#FFCD00] flex items-center justify-center font-black text-sm">
                     {i + 1}
                   </span>
                   <div>
@@ -190,9 +190,9 @@ export default function AdminDashboard() {
                   <td className="py-2 mono text-right">${(c.profit_amount || 0).toFixed(2)}</td>
                   <td className="py-2 text-right">
                     <span className={`nb-pill text-[9px] ${
-                      c.status === "completed" ? "bg-[#00E59B]" :
-                      c.status === "billing_failed" ? "bg-[#FF453A] text-white" :
-                      "bg-[#FFC900]"
+                      c.status === "completed" ? "bg-[#009639] text-white" :
+                      c.status === "billing_failed" ? "bg-[#DE2010] text-white" :
+                      "bg-[#FFCD00]"
                     }`}>{c.status}</span>
                   </td>
                 </tr>
@@ -206,8 +206,10 @@ export default function AdminDashboard() {
 }
 
 function KpiCard({ label, value, accent, icon, testid }) {
+  // Auto-flip text to white on dark accents
+  const dark = ["#0A0A0A", "#009639", "#DE2010", "#1F2937", "#0B6E4F", "#B7472A", "#2C2C2C"].includes(accent);
   return (
-    <div className="nb-card p-5" style={{ backgroundColor: accent }} data-testid={testid}>
+    <div className="nb-card p-5" style={{ backgroundColor: accent, color: dark ? "#FFFFFF" : "#0A0A0A" }} data-testid={testid}>
       <div className="flex justify-between items-start">
         <p className="overline">{label}</p>
         {icon}

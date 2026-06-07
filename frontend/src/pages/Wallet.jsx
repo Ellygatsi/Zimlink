@@ -114,7 +114,7 @@ export default function WalletPage() {
                     <p className="text-xs text-neutral-500">{new Date(tx.created_at).toLocaleString()}{tx.note ? ` · ${tx.note}` : ""}</p>
                   </div>
                 </div>
-                <p className={`text-lg font-black mono ${isOutgoing ? "text-black" : "text-[#00E59B]"}`}>
+                <p className={`text-lg font-black mono ${isOutgoing ? "text-black" : "text-[#009639]"}`}>
                   {isOutgoing ? "-" : "+"}${tx.amount.toFixed(2)}
                 </p>
               </div>

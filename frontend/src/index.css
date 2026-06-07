@@ -30,11 +30,19 @@
 
 body {
     margin: 0;
-    background-color: #FDFBF7;
     color: #0A0A0A;
     font-family: 'Satoshi', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     font-feature-settings: 'ss01';
+    background-color: #FFF8EC;
+    background-image:
+        linear-gradient(rgba(255, 248, 236, 0.88), rgba(255, 248, 236, 0.92)),
+        url('https://images.unsplash.com/photo-1674573606969-0b0403e6fce1?fm=jpg&q=60&w=2400&auto=format&fit=crop');
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+    min-height: 100vh;
 }
 
 h1, h2, h3, h4, h5 {

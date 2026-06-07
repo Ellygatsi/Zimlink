@@ -62,7 +62,7 @@ export default function Marketplace() {
           <p className="overline text-neutral-500">SHOP & SELL</p>
           <h1 className="text-5xl md:text-6xl font-black tracking-tighter mt-2">Marketplace.</h1>
         </div>
-        <button onClick={() => setShowCreate(true)} className="nb-btn text-black" style={{ backgroundColor: ACCENTS.marketplace }} data-testid="new-listing-button">
+        <button onClick={() => setShowCreate(true)} className="nb-btn text-white" style={{ backgroundColor: ACCENTS.marketplace }} data-testid="new-listing-button">
           <Plus size={18} weight="bold" /> New Listing
         </button>
       </div>
@@ -86,7 +86,7 @@ export default function Marketplace() {
             onClick={() => { setFilter(t.key); load(t.key, q); }}
             data-testid={`market-filter-${t.key}`}
             className={`nb-btn text-sm ${filter === t.key ? "" : "bg-white"}`}
-            style={filter === t.key ? { backgroundColor: ACCENTS.marketplace, color: "black" } : {}}
+            style={filter === t.key ? { backgroundColor: ACCENTS.marketplace, color: "white" } : {}}
           >
             {t.label}
           </button>
@@ -106,7 +106,7 @@ export default function Marketplace() {
                 <div className="w-full h-full flex items-center justify-center text-neutral-400 text-xs">No image</div>
               )}
               <span className="absolute top-2 right-2 nb-pill bg-white text-xs">${item.price}</span>
-              <span className="absolute top-2 left-2 nb-pill text-xs" style={{ backgroundColor: item.category === "goods" ? ACCENTS.marketplace : ACCENTS.community }}>{item.category}</span>
+              <span className="absolute top-2 left-2 nb-pill text-xs" style={{ backgroundColor: item.category === "goods" ? ACCENTS.marketplace : ACCENTS.community, color: "white" }}>{item.category}</span>
             </div>
             <div className="p-3">
               <p className="font-bold text-sm line-clamp-1">{item.title}</p>
@@ -152,14 +152,14 @@ export default function Marketplace() {
                     key={url}
                     type="button"
                     onClick={() => setForm({ ...form, image_url: url })}
-                    className={`aspect-square border-2 border-black rounded-lg overflow-hidden ${form.image_url === url ? "ring-4 ring-[#FF90E8]" : ""}`}
+                    className={`aspect-square border-2 border-black rounded-lg overflow-hidden ${form.image_url === url ? "ring-4 ring-[#FFCD00]" : ""}`}
                   >
                     <img src={url} alt="opt" className="w-full h-full object-cover" />
                   </button>
                 ))}
               </div>
             </div>
-            <button disabled={busy} className="nb-btn w-full h-12 text-black" style={{ backgroundColor: ACCENTS.marketplace }} data-testid="listing-submit-button">
+            <button disabled={busy} className="nb-btn w-full h-12 text-white" style={{ backgroundColor: ACCENTS.marketplace }} data-testid="listing-submit-button">
               {busy ? "Posting…" : "Post Listing"}
             </button>
           </form>

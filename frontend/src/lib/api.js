@@ -19,9 +19,9 @@ api.interceptors.request.use((config) => {
 export default api;
 
 export const ACCENTS = {
-  wallet: "#00E59B",
-  calling: "#7F6BFF",
-  marketplace: "#FF90E8",
-  community: "#FFC900",
-  alert: "#FF453A",
+  wallet: "#FFCD00",       // Zimbabwe Gold
+  calling: "#009639",      // Zimbabwe Green
+  marketplace: "#DE2010",  // Zimbabwe Red
+  community: "#0A0A0A",    // Zimbabwe Black
+  alert: "#DE2010",        // flag red
 };

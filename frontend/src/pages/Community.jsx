@@ -13,8 +13,8 @@ export default function Community() {
         <h1 className="text-5xl md:text-6xl font-black tracking-tighter mt-2">Community.</h1>
       </div>
       <div className="flex gap-2">
-        <button onClick={() => setTab("feed")} className={`nb-btn ${tab === "feed" ? "" : "bg-white"}`} style={tab === "feed" ? { backgroundColor: ACCENTS.community } : {}} data-testid="tab-feed">Feed</button>
-        <button onClick={() => setTab("channels")} className={`nb-btn ${tab === "channels" ? "" : "bg-white"}`} style={tab === "channels" ? { backgroundColor: ACCENTS.community } : {}} data-testid="tab-channels">Channels</button>
+        <button onClick={() => setTab("feed")} className={`nb-btn ${tab === "feed" ? "text-white" : "bg-white"}`} style={tab === "feed" ? { backgroundColor: ACCENTS.community } : {}} data-testid="tab-feed">Feed</button>
+        <button onClick={() => setTab("channels")} className={`nb-btn ${tab === "channels" ? "text-white" : "bg-white"}`} style={tab === "channels" ? { backgroundColor: ACCENTS.community } : {}} data-testid="tab-channels">Channels</button>
       </div>
       {tab === "feed" ? <Feed /> : <Channels />}
     </div>
@@ -76,7 +76,7 @@ function Feed() {
 
   return (
     <div className="space-y-4">
-      <button onClick={() => setShowNew(true)} className="nb-btn text-black" style={{ backgroundColor: ACCENTS.community }} data-testid="new-post-button">
+      <button onClick={() => setShowNew(true)} className="nb-btn text-white" style={{ backgroundColor: ACCENTS.community }} data-testid="new-post-button">
         <Plus size={18} weight="bold" /> New Post
       </button>
 
@@ -87,7 +87,7 @@ function Feed() {
           return (
             <div key={p.id} className="nb-card p-5" data-testid={`post-${p.id}`}>
               <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-full border-2 border-black bg-[#FFC900] flex items-center justify-center font-black">
+                <div className="w-10 h-10 rounded-full border-2 border-black bg-[#FFCD00] flex items-center justify-center font-black">
                   {p.author_name?.[0]?.toUpperCase()}
                 </div>
                 <div>
@@ -143,7 +143,7 @@ function Feed() {
               <button type="button" onClick={() => setShowNew(false)}><X size={22} weight="bold" /></button>
             </div>
             <textarea required rows={4} className="nb-textarea" value={content} onChange={(e) => setContent(e.target.value)} placeholder="What's happening?" data-testid="post-content-input" />
-            <button disabled={busy} className="nb-btn w-full h-12 text-black" style={{ backgroundColor: ACCENTS.community }} data-testid="post-submit-button">
+            <button disabled={busy} className="nb-btn w-full h-12 text-white" style={{ backgroundColor: ACCENTS.community }} data-testid="post-submit-button">
               {busy ? "Posting…" : "Post"}
             </button>
           </form>
@@ -218,7 +218,7 @@ function Channels() {
               key={c.id}
               onClick={() => setActive(c)}
               data-testid={`channel-${c.id}`}
-              className={`w-full text-left px-3 py-2 rounded-lg border-2 border-black flex items-center gap-2 font-bold text-sm ${active?.id === c.id ? "" : "bg-white"}`}
+              className={`w-full text-left px-3 py-2 rounded-lg border-2 border-black flex items-center gap-2 font-bold text-sm ${active?.id === c.id ? "text-white" : "bg-white"}`}
               style={active?.id === c.id ? { backgroundColor: ACCENTS.community } : {}}
             >
               <Hash size={14} weight="bold" /> {c.name}

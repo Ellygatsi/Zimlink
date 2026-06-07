@@ -51,14 +51,14 @@ export default function MarketplaceDetail() {
           </div>
         </div>
         <div className="space-y-4">
-          <span className="nb-pill" style={{ backgroundColor: item.category === "goods" ? ACCENTS.marketplace : ACCENTS.community }}>
+          <span className="nb-pill" style={{ backgroundColor: item.category === "goods" ? ACCENTS.marketplace : ACCENTS.community, color: "white" }}>
             {item.category}
           </span>
           <h1 className="text-4xl md:text-5xl font-black tracking-tighter">{item.title}</h1>
           <p className="text-4xl font-black mono">${item.price}</p>
           <p className="text-base text-neutral-700 whitespace-pre-wrap">{item.description}</p>
           <div className="nb-card p-4 flex items-center gap-3">
-            <div className="w-12 h-12 rounded-full border-2 border-black bg-[#FFC900] flex items-center justify-center font-black">
+            <div className="w-12 h-12 rounded-full border-2 border-black bg-[#FFCD00] flex items-center justify-center font-black">
               {item.seller_name?.[0]?.toUpperCase()}
             </div>
             <div className="flex-1">
@@ -68,7 +68,7 @@ export default function MarketplaceDetail() {
           </div>
           <div className="flex gap-2">
             {item.seller_id !== user?.id ? (
-              <button onClick={contactSeller} className="nb-btn flex-1 text-black h-12" style={{ backgroundColor: ACCENTS.marketplace }} data-testid="contact-seller-button">
+              <button onClick={contactSeller} className="nb-btn flex-1 text-white h-12" style={{ backgroundColor: ACCENTS.marketplace }} data-testid="contact-seller-button">
                 <EnvelopeSimple size={18} weight="bold" /> Contact seller
               </button>
             ) : (

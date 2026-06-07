@@ -11,7 +11,6 @@ import WalletPage from "@/pages/Wallet";
 import Marketplace from "@/pages/Marketplace";
 import MarketplaceDetail from "@/pages/MarketplaceDetail";
 import Community from "@/pages/Community";
-import ThemePreview from "@/pages/ThemePreview";
 import AdminDashboard from "@/pages/AdminDashboard";
 import AdminRates from "@/pages/AdminRates";
 import AdminGuard from "@/components/AdminGuard";
@@ -44,7 +43,6 @@ function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
-          <Route path="/theme-preview" element={<ThemePreview />} />
           <Route path="/" element={<Protected><Home /></Protected>} />
           <Route path="/calls" element={<Protected><Calls /></Protected>} />
           <Route path="/wallet" element={<Protected><WalletPage /></Protected>} />
