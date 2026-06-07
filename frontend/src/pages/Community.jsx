@@ -35,7 +35,9 @@ function Feed() {
     const { data } = await api.get("/community/posts");
     setPosts(data);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    api.get("/community/posts").then(({ data }) => setPosts(data)).catch(() => {});
+  }, []);
 
   const submitPost = async (e) => {
     e.preventDefault();
@@ -170,8 +172,16 @@ function Channels() {
     setMessages(data);
   };
 
-  useEffect(() => { loadChannels(); }, []);
-  useEffect(() => { if (active) loadMessages(active.id); }, [active]);
+  useEffect(() => {
+    api.get("/community/channels").then(({ data }) => {
+      setChannels(data);
+      if (data[0]) setActive(data[0]);
+    }).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (!active) return;
+    api.get(`/community/channels/${active.id}/messages`).then(({ data }) => setMessages(data)).catch(() => {});
+  }, [active]);
 
   const send = async (e) => {
     e.preventDefault();
@@ -190,7 +200,7 @@ function Channels() {
       setShowCreate(false);
       await loadChannels();
       setActive(data);
-    } catch {
+    } catch (_e) {
       toast.error("Could not create channel");
     }
   };

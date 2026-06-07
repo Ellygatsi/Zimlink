@@ -11,6 +11,9 @@ import WalletPage from "@/pages/Wallet";
 import Marketplace from "@/pages/Marketplace";
 import MarketplaceDetail from "@/pages/MarketplaceDetail";
 import Community from "@/pages/Community";
+import AdminDashboard from "@/pages/AdminDashboard";
+import AdminRates from "@/pages/AdminRates";
+import AdminGuard from "@/components/AdminGuard";
 import "@/App.css";
 
 function Protected({ children }) {
@@ -46,6 +49,8 @@ function App() {
           <Route path="/marketplace" element={<Protected><Marketplace /></Protected>} />
           <Route path="/marketplace/:id" element={<Protected><MarketplaceDetail /></Protected>} />
           <Route path="/community" element={<Protected><Community /></Protected>} />
+          <Route path="/admin" element={<Protected><AdminGuard><AdminDashboard /></AdminGuard></Protected>} />
+          <Route path="/admin/rates" element={<Protected><AdminGuard><AdminRates /></AdminGuard></Protected>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

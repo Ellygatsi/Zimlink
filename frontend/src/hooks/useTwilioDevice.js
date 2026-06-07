@@ -61,7 +61,7 @@ export function useTwilioDevice(enabled) {
     return () => {
       mounted = false;
       if (deviceRef.current) {
-        try { deviceRef.current.destroy(); } catch {}
+        try { deviceRef.current.destroy(); } catch (_e) { /* noop */ }
         deviceRef.current = null;
       }
     };

@@ -23,7 +23,15 @@ export default function WalletPage() {
     setTxs(t);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    Promise.all([
+      api.get("/wallet/balance"),
+      api.get("/wallet/transactions"),
+    ]).then(([b, t]) => {
+      setBalance(b.data.balance);
+      setTxs(t.data);
+    }).catch(() => {});
+  }, []);
 
   const sendMoney = async (e) => {
     e.preventDefault();

@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { House, Phone, Wallet, Storefront, ChatsCircle, SignOut } from "@phosphor-icons/react";
+import { House, Phone, Wallet, Storefront, ChatsCircle, SignOut, ShieldStar } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 import { ACCENTS } from "@/lib/api";
 
@@ -11,6 +11,8 @@ const NAV = [
   { to: "/community", label: "Community", icon: ChatsCircle, color: ACCENTS.community, testid: "nav-community" },
 ];
 
+const ADMIN_NAV = { to: "/admin", label: "Admin", icon: ShieldStar, color: "#0A0A0A", testid: "nav-admin" };
+
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -19,6 +21,8 @@ export default function Layout({ children }) {
     await logout();
     navigate("/login");
   };
+
+  const navItems = user?.is_admin ? [...NAV, ADMIN_NAV] : NAV;
 
   return (
     <div className="min-h-screen bg-[#FDFBF7] text-black">
@@ -29,7 +33,7 @@ export default function Layout({ children }) {
           <p className="overline text-neutral-500 mt-1">CALL ZIMBABWE</p>
         </div>
         <nav className="flex flex-col gap-2 flex-1">
-          {NAV.map((item) => (
+          {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -84,7 +88,7 @@ export default function Layout({ children }) {
 
       {/* Mobile bottom nav */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t-2 border-black flex justify-around py-2">
-        {NAV.map((item) => (
+        {navItems.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

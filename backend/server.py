@@ -77,6 +77,35 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
+async def require_admin(current=Depends(get_current_user)) -> dict:
+    if not current.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current
+
+
+async def get_rate_for_number(to_number: str) -> dict:
+    """Find the best matching call rate for an E.164 number by longest-prefix match.
+    Falls back to the 'default' rate if no prefix matches."""
+    to_number = (to_number or "").strip()
+    if to_number and not to_number.startswith("+"):
+        # In-app client-id calls are free
+        if not to_number[0].isdigit():
+            return {"rate_per_minute": 0.0, "name": "In-app", "prefix": ""}
+    rates = await db.call_rates.find({}, {"_id": 0}).to_list(100)
+    best = None
+    for r in rates:
+        prefix = r.get("prefix", "")
+        if prefix == "default":
+            continue
+        if prefix and to_number.startswith(prefix):
+            if best is None or len(prefix) > len(best.get("prefix", "")):
+                best = r
+    if best:
+        return best
+    default = next((r for r in rates if r.get("prefix") == "default"), None)
+    return default or {"rate_per_minute": 0.30, "name": "Default", "prefix": "default"}
+
+
 # ----- Models -----
 class RegisterIn(BaseModel):
     email: EmailStr
@@ -112,6 +141,18 @@ class ChannelIn(BaseModel):
 
 class MessageIn(BaseModel):
     content: str = Field(min_length=1, max_length=1000)
+
+class CallRateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    prefix: str = Field(min_length=1, max_length=20)  # e.g. "+2637" or "default"
+    rate_per_minute: float = Field(ge=0)
+    cost_per_minute: float = Field(ge=0, default=0.0)  # what Twilio charges us
+
+class UpdateRateIn(BaseModel):
+    name: Optional[str] = None
+    prefix: Optional[str] = None
+    rate_per_minute: Optional[float] = Field(default=None, ge=0)
+    cost_per_minute: Optional[float] = Field(default=None, ge=0)
 
 
 # ----- Auth Endpoints -----
@@ -442,16 +483,66 @@ async def voice_twiml(request: Request):
     return Response(content=str(response), media_type="text/xml")
 
 
+@api.get("/voice/rate-quote")
+async def voice_rate_quote(to: str, current=Depends(get_current_user)):
+    """Return what the rate per minute is for the given destination + balance + max minutes."""
+    rate = await get_rate_for_number(to)
+    user = await db.users.find_one({"id": current["id"]}, {"_id": 0, "wallet_balance": 1})
+    balance = float(user.get("wallet_balance", 0.0)) if user else 0.0
+    rpm = float(rate.get("rate_per_minute", 0.0))
+    max_minutes = (balance / rpm) if rpm > 0 else float("inf")
+    return {
+        "to": to,
+        "rate_per_minute": rpm,
+        "rate_name": rate.get("name", ""),
+        "balance": balance,
+        "max_minutes": round(max_minutes, 2) if rpm > 0 else None,
+        "free": rpm == 0,
+    }
+
+
 @api.post("/voice/call-log")
 async def log_call(payload: dict, current=Depends(get_current_user)):
+    """Log a finished call and bill the caller's wallet based on configured rates."""
+    to = (payload.get("to") or "").strip()
+    duration = max(0, min(int(payload.get("duration_seconds", 0) or 0), 4 * 60 * 60))
+    status_val = payload.get("status", "completed")
+    direction = payload.get("direction", "outbound")
+
+    rate = await get_rate_for_number(to)
+    rpm = float(rate.get("rate_per_minute", 0.0))
+    cpm = float(rate.get("cost_per_minute", 0.0))
+    charge = round(rpm * (duration / 60.0), 4) if direction == "outbound" else 0.0
+    cost = round(cpm * (duration / 60.0), 4) if direction == "outbound" else 0.0
+
+    billed = False
+    if charge > 0:
+        # Atomic balance decrement only if user has enough.
+        result = await db.users.update_one(
+            {"id": current["id"], "wallet_balance": {"$gte": charge}},
+            {"$inc": {"wallet_balance": -charge}},
+        )
+        billed = result.modified_count == 1
+        if not billed:
+            status_val = "billing_failed"
+
     entry = {
         "id": new_id(),
         "user_id": current["id"],
-        "to": payload.get("to", ""),
+        "user_name": current.get("name", ""),
+        "user_email": current.get("email", ""),
+        "to": to,
         "to_name": payload.get("to_name", ""),
-        "direction": payload.get("direction", "outbound"),
-        "duration_seconds": int(payload.get("duration_seconds", 0)),
-        "status": payload.get("status", "completed"),
+        "direction": direction,
+        "duration_seconds": duration,
+        "status": status_val,
+        "rate_per_minute": rpm,
+        "cost_per_minute": cpm,
+        "charge_amount": charge,
+        "cost_amount": cost,
+        "profit_amount": round(charge - cost, 4),
+        "billed": billed,
+        "rate_name": rate.get("name", ""),
         "created_at": now_iso(),
     }
     await db.calls.insert_one(entry)
@@ -486,6 +577,141 @@ async def home_stats(current=Depends(get_current_user)):
     }
 
 
+# ----- Admin: Calling module -----
+@api.get("/admin/me")
+async def admin_me(current=Depends(require_admin)):
+    return {"is_admin": True, "email": current["email"], "name": current.get("name", "")}
+
+@api.get("/admin/stats/calls")
+async def admin_call_stats(days: int = 30, _=Depends(require_admin)):
+    """Aggregate call stats over the past N days."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    pipeline = [
+        {"$match": {"created_at": {"$gte": cutoff}, "direction": "outbound"}},
+        {"$group": {
+            "_id": None,
+            "total_calls": {"$sum": 1},
+            "total_seconds": {"$sum": "$duration_seconds"},
+            "total_revenue": {"$sum": "$charge_amount"},
+            "total_cost": {"$sum": "$cost_amount"},
+            "total_profit": {"$sum": "$profit_amount"},
+            "billed_calls": {"$sum": {"$cond": ["$billed", 1, 0]}},
+        }},
+    ]
+    agg = await db.calls.aggregate(pipeline).to_list(1)
+    summary = agg[0] if agg else {
+        "total_calls": 0, "total_seconds": 0, "total_revenue": 0.0,
+        "total_cost": 0.0, "total_profit": 0.0, "billed_calls": 0,
+    }
+    summary.pop("_id", None)
+
+    # Top callers by spend
+    top_pipeline = [
+        {"$match": {"created_at": {"$gte": cutoff}, "direction": "outbound", "billed": True}},
+        {"$group": {
+            "_id": "$user_id",
+            "user_name": {"$first": "$user_name"},
+            "user_email": {"$first": "$user_email"},
+            "calls": {"$sum": 1},
+            "minutes": {"$sum": {"$divide": ["$duration_seconds", 60]}},
+            "spent": {"$sum": "$charge_amount"},
+        }},
+        {"$sort": {"spent": -1}},
+        {"$limit": 5},
+    ]
+    top_callers = await db.calls.aggregate(top_pipeline).to_list(5)
+    for t in top_callers:
+        t["user_id"] = t.pop("_id")
+
+    # By-day series for chart
+    by_day_pipeline = [
+        {"$match": {"created_at": {"$gte": cutoff}, "direction": "outbound"}},
+        {"$group": {
+            "_id": {"$substr": ["$created_at", 0, 10]},
+            "calls": {"$sum": 1},
+            "revenue": {"$sum": "$charge_amount"},
+            "minutes": {"$sum": {"$divide": ["$duration_seconds", 60]}},
+        }},
+        {"$sort": {"_id": 1}},
+    ]
+    by_day = await db.calls.aggregate(by_day_pipeline).to_list(60)
+    by_day = [{"date": d["_id"], "calls": d["calls"], "revenue": d["revenue"], "minutes": d["minutes"]} for d in by_day]
+
+    user_count = await db.users.count_documents({})
+    return {
+        "window_days": days,
+        "summary": summary,
+        "top_callers": top_callers,
+        "by_day": by_day,
+        "user_count": user_count,
+    }
+
+@api.get("/admin/calls")
+async def admin_list_calls(limit: int = 100, _=Depends(require_admin)):
+    items = await db.calls.find({}, {"_id": 0}).sort("created_at", -1).to_list(min(limit, 500))
+    return items
+
+@api.get("/admin/rates")
+async def admin_list_rates(_=Depends(require_admin)):
+    items = await db.call_rates.find({}, {"_id": 0}).sort("prefix", 1).to_list(200)
+    return items
+
+@api.post("/admin/rates")
+async def admin_create_rate(data: CallRateIn, _=Depends(require_admin)):
+    prefix = data.prefix.strip()
+    existing = await db.call_rates.find_one({"prefix": prefix})
+    if existing:
+        raise HTTPException(status_code=400, detail="A rate with this prefix already exists")
+    rate = {
+        "id": new_id(),
+        "name": data.name,
+        "prefix": prefix,
+        "rate_per_minute": float(data.rate_per_minute),
+        "cost_per_minute": float(data.cost_per_minute),
+        "created_at": now_iso(),
+    }
+    await db.call_rates.insert_one(rate)
+    rate.pop("_id", None)
+    return rate
+
+@api.put("/admin/rates/{rate_id}")
+async def admin_update_rate(rate_id: str, data: UpdateRateIn, _=Depends(require_admin)):
+    update = {k: v for k, v in data.model_dump(exclude_none=True).items()}
+    if not update:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    result = await db.call_rates.update_one({"id": rate_id}, {"$set": update})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Rate not found")
+    updated = await db.call_rates.find_one({"id": rate_id}, {"_id": 0})
+    return updated
+
+@api.delete("/admin/rates/{rate_id}")
+async def admin_delete_rate(rate_id: str, _=Depends(require_admin)):
+    rate = await db.call_rates.find_one({"id": rate_id}, {"_id": 0, "prefix": 1})
+    if not rate:
+        raise HTTPException(status_code=404, detail="Rate not found")
+    if rate.get("prefix") == "default":
+        raise HTTPException(status_code=400, detail="Cannot delete the default rate")
+    await db.call_rates.delete_one({"id": rate_id})
+    return {"ok": True}
+
+@api.get("/admin/users")
+async def admin_list_users(_=Depends(require_admin)):
+    items = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(500)
+    return items
+
+@api.post("/admin/users/{user_id}/credit")
+async def admin_credit_user(user_id: str, payload: dict, _=Depends(require_admin)):
+    amount = float(payload.get("amount", 0))
+    if amount == 0:
+        raise HTTPException(status_code=400, detail="amount must be non-zero")
+    result = await db.users.update_one({"id": user_id}, {"$inc": {"wallet_balance": amount}})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "id": 1, "name": 1, "wallet_balance": 1})
+    return user
+
+
 # ----- App config / startup -----
 app.include_router(api)
 app.add_middleware(
@@ -505,10 +731,15 @@ async def on_startup():
     await db.posts.create_index("created_at")
     await db.transactions.create_index([("from_id", 1), ("created_at", -1)])
     await db.channels.create_index("name")
+    await db.calls.create_index([("user_id", 1), ("created_at", -1)])
+    await db.calls.create_index("created_at")
+    await db.call_rates.create_index("prefix", unique=True)
+
+    admin_email = os.environ.get("ADMIN_EMAIL", "").lower()
     # Seed admin & test user
-    for email_key, pw_key, name, balance in [
-        ("ADMIN_EMAIL", "ADMIN_PASSWORD", "Admin", 1000.0),
-        ("TEST_USER_EMAIL", "TEST_USER_PASSWORD", "Test User", 500.0),
+    for email_key, pw_key, name, balance, is_admin in [
+        ("ADMIN_EMAIL", "ADMIN_PASSWORD", "Admin", 1000.0, True),
+        ("TEST_USER_EMAIL", "TEST_USER_PASSWORD", "Test User", 500.0, False),
     ]:
         email = os.environ.get(email_key, "").lower()
         password = os.environ.get(pw_key, "")
@@ -524,12 +755,19 @@ async def on_startup():
                 "avatar_url": "",
                 "wallet_balance": balance,
                 "phone": "",
+                "is_admin": is_admin,
                 "created_at": now_iso(),
             })
-            logger.info(f"Seeded user: {email}")
+            logger.info(f"Seeded user: {email} (admin={is_admin})")
+    # Backfill: ensure admin email user has is_admin=True
+    if admin_email:
+        await db.users.update_one({"email": admin_email}, {"$set": {"is_admin": True}})
+    # Backfill: ensure all other users have is_admin field
+    await db.users.update_many({"is_admin": {"$exists": False}}, {"$set": {"is_admin": False}})
+
     # Seed a default channel
     if not await db.channels.find_one({"name": "general"}):
-        admin = await db.users.find_one({"email": os.environ.get("ADMIN_EMAIL", "").lower()})
+        admin = await db.users.find_one({"email": admin_email})
         await db.channels.insert_one({
             "id": new_id(),
             "name": "general",
@@ -537,6 +775,23 @@ async def on_startup():
             "creator_id": admin["id"] if admin else "system",
             "created_at": now_iso(),
         })
+
+    # Seed default call rates (only if none exist)
+    if await db.call_rates.count_documents({}) == 0:
+        defaults = [
+            {"name": "Zimbabwe Mobile",   "prefix": "+2637",  "rate_per_minute": 0.30, "cost_per_minute": 0.15},
+            {"name": "Zimbabwe Landline", "prefix": "+2632",  "rate_per_minute": 0.20, "cost_per_minute": 0.08},
+            {"name": "Zimbabwe Harare",   "prefix": "+2634",  "rate_per_minute": 0.20, "cost_per_minute": 0.08},
+            {"name": "South Africa",      "prefix": "+27",    "rate_per_minute": 0.10, "cost_per_minute": 0.04},
+            {"name": "United Kingdom",    "prefix": "+44",    "rate_per_minute": 0.05, "cost_per_minute": 0.02},
+            {"name": "United States",     "prefix": "+1",     "rate_per_minute": 0.05, "cost_per_minute": 0.013},
+            {"name": "Default",           "prefix": "default","rate_per_minute": 0.35, "cost_per_minute": 0.18},
+        ]
+        for r in defaults:
+            r["id"] = new_id()
+            r["created_at"] = now_iso()
+        await db.call_rates.insert_many(defaults)
+        logger.info(f"Seeded {len(defaults)} default call rates")
 
 
 @app.on_event("shutdown")

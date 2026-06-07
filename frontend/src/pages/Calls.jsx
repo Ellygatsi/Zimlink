@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import api, { ACCENTS } from "@/lib/api";
 import { Phone, PhoneDisconnect, Backspace, X, Warning, CheckCircle } from "@phosphor-icons/react";
 import { toast } from "sonner";
@@ -12,7 +12,8 @@ export default function Calls() {
   const [history, setHistory] = useState([]);
   const [voiceConfig, setVoiceConfig] = useState(null);
   const [tab, setTab] = useState("dial");
-  const [callStart, setCallStart] = useState(null);
+  const callStartRef = useRef(null);
+  const [quote, setQuote] = useState(null);
 
   const twilioEnabled = !!(voiceConfig && voiceConfig.enabled);
   const { status, error, activeCall, incomingCall, makeCall, hangup, acceptIncoming, rejectIncoming } =
@@ -22,30 +23,56 @@ export default function Calls() {
     try {
       const { data } = await api.get("/voice/config");
       setVoiceConfig(data);
-    } catch {}
+    } catch (_e) { /* ignore */ }
   };
   const loadContacts = async () => {
-    try { const { data } = await api.get("/users"); setContacts(data); } catch {}
+    try { const { data } = await api.get("/users"); setContacts(data); } catch (_e) { /* ignore */ }
   };
   const loadHistory = async () => {
-    try { const { data } = await api.get("/voice/call-history"); setHistory(data); } catch {}
+    try { const { data } = await api.get("/voice/call-history"); setHistory(data); } catch (_e) { /* ignore */ }
   };
 
   useEffect(() => {
-    loadConfig(); loadContacts(); loadHistory();
+    api.get("/voice/config").then(({ data }) => setVoiceConfig(data)).catch(() => {});
+    api.get("/users").then(({ data }) => setContacts(data)).catch(() => {});
+    api.get("/voice/call-history").then(({ data }) => setHistory(data)).catch(() => {});
   }, []);
 
+  // Rate quote fetcher
+  const fetchQuote = (target) => {
+    const trimmed = (target || "").trim();
+    if (trimmed.length < 3) return;
+    api.get(`/voice/rate-quote?to=${encodeURIComponent(trimmed)}`)
+      .then(({ data }) => setQuote(data))
+      .catch(() => {});
+  };
+  const updateNumber = (val) => {
+    setNumber(val);
+    fetchQuote(val);
+  };
+
+  // Initial quote fetch
   useEffect(() => {
-    if (status === "in-call" && !callStart) setCallStart(Date.now());
-    if (status === "ready" && callStart) {
-      const duration = Math.floor((Date.now() - callStart) / 1000);
+    api.get(`/voice/rate-quote?to=${encodeURIComponent("+263")}`)
+      .then(({ data }) => setQuote(data))
+      .catch(() => {});
+  }, []);
+
+  // Track call lifecycle via ref to avoid effect-driven setState
+  useEffect(() => {
+    if (status === "in-call" && !callStartRef.current) {
+      callStartRef.current = Date.now();
+    }
+    if (status === "ready" && callStartRef.current) {
+      const duration = Math.floor((Date.now() - callStartRef.current) / 1000);
+      const captured = number;
+      callStartRef.current = null;
       api.post("/voice/call-log", {
-        to: number, to_name: "",
+        to: captured, to_name: "",
         direction: "outbound", duration_seconds: duration, status: "completed",
       }).then(loadHistory).catch(() => {});
-      setCallStart(null);
     }
-  }, [status]); // eslint-disable-line
+  }, [status, number]);
 
   const dial = async (target, targetName = "") => {
     if (!target) return;
@@ -78,12 +105,13 @@ export default function Calls() {
 
   const endCall = () => {
     hangup();
+    const startedAt = callStartRef.current;
     api.post("/voice/call-log", {
       to: number, to_name: "", direction: "outbound",
-      duration_seconds: callStart ? Math.floor((Date.now() - callStart) / 1000) : 0,
+      duration_seconds: startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0,
       status: "completed",
     }).then(loadHistory).catch(() => {});
-    setCallStart(null);
+    callStartRef.current = null;
   };
 
   const statusLabel = {
@@ -172,11 +200,11 @@ export default function Calls() {
               className="flex-1 bg-transparent text-3xl md:text-4xl font-black tracking-tighter mono outline-none placeholder:text-neutral-400"
               placeholder="+263 77…"
               value={number}
-              onChange={(e) => setNumber(e.target.value)}
+              onChange={(e) => updateNumber(e.target.value)}
               data-testid="dialpad-display"
             />
             <button
-              onClick={() => setNumber((n) => n.slice(0, -1))}
+              onClick={() => updateNumber(number.slice(0, -1))}
               className="ml-2 p-2"
               data-testid="dialpad-backspace"
               aria-label="Backspace"
@@ -188,7 +216,7 @@ export default function Calls() {
             {KEYS.map((k) => (
               <button
                 key={k}
-                onClick={() => setNumber((n) => n + k)}
+                onClick={() => updateNumber(number + k)}
                 data-testid={`dialpad-${k}`}
                 className="nb-btn h-16 text-2xl font-black bg-white"
               >
@@ -205,6 +233,17 @@ export default function Calls() {
           >
             <Phone size={22} weight="fill" /> {status === "calling" ? "Ringing…" : "Call"}
           </button>
+          {quote && (
+            <div className="mt-3 flex items-center justify-between text-xs px-1" data-testid="rate-quote">
+              <span className="text-neutral-600">
+                {quote.free ? "In-app · " : `${quote.rate_name} · `}
+                <span className="mono font-bold">${quote.rate_per_minute.toFixed(2)}/min</span>
+              </span>
+              <span className="text-neutral-600">
+                {quote.free ? "Free" : `~${Math.floor(quote.max_minutes)} min on $${quote.balance.toFixed(2)}`}
+              </span>
+            </div>
+          )}
         </div>
       )}
 

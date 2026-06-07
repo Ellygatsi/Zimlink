@@ -27,7 +27,9 @@ export default function Marketplace() {
     setItems(data);
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    api.get("/marketplace/listings").then(({ data }) => setItems(data)).catch(() => {});
+  }, []);
 
   const submit = async (e) => {
     e.preventDefault();
