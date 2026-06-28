@@ -1221,13 +1221,13 @@ async def admin_topup_stats(days: int = 30, _=Depends(require_admin)):
 
 
 # ----- CORS & App startup -----
-app.include_router(api)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?|https://.*\.ngrok-free\.app",
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?|https://.*\.ngrok-free\.app|https://.*\.vercel\.app|https://.*\.zimlink\.me|https://zimlink\.me",
     allow_methods=["*"],
     allow_headers=["*"],
+)
 )
 
 
