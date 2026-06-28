@@ -10,10 +10,13 @@ import Calls from "@/pages/Calls";
 import WalletPage from "@/pages/Wallet";
 import Marketplace from "@/pages/Marketplace";
 import MarketplaceDetail from "@/pages/MarketplaceDetail";
+import Events from "@/pages/Events";
+import EventDetail from "@/pages/EventDetail";
 import Community from "@/pages/Community";
 import AdminDashboard from "@/pages/AdminDashboard";
 import AdminRates from "@/pages/AdminRates";
 import AdminSettings from "@/pages/AdminSettings";
+import AdminUsers from "@/pages/AdminUsers";
 import AdminGuard from "@/components/AdminGuard";
 import "@/App.css";
 
@@ -22,6 +25,14 @@ function Protected({ children }) {
     <ProtectedRoute>
       <Layout>{children}</Layout>
     </ProtectedRoute>
+  );
+}
+
+function AdminProtected({ children }) {
+  return (
+    <Protected>
+      <AdminGuard>{children}</AdminGuard>
+    </Protected>
   );
 }
 
@@ -41,19 +52,30 @@ function App() {
             },
           }}
         />
+
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
-          <Route path="/" element={<Protected><Home /></Protected>} />
+
+          <Route path="/" element={<Navigate to="/home" replace />} />
+          <Route path="/home" element={<Protected><Home /></Protected>} />
           <Route path="/calls" element={<Protected><Calls /></Protected>} />
           <Route path="/wallet" element={<Protected><WalletPage /></Protected>} />
+
           <Route path="/marketplace" element={<Protected><Marketplace /></Protected>} />
           <Route path="/marketplace/:id" element={<Protected><MarketplaceDetail /></Protected>} />
+
+          <Route path="/events" element={<Protected><Events /></Protected>} />
+          <Route path="/events/:id" element={<Protected><EventDetail /></Protected>} />
+
           <Route path="/community" element={<Protected><Community /></Protected>} />
-          <Route path="/admin" element={<Protected><AdminGuard><AdminDashboard /></AdminGuard></Protected>} />
-          <Route path="/admin/rates" element={<Protected><AdminGuard><AdminRates /></AdminGuard></Protected>} />
-          <Route path="/admin/settings" element={<Protected><AdminGuard><AdminSettings /></AdminGuard></Protected>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+
+          <Route path="/admin" element={<AdminProtected><AdminDashboard /></AdminProtected>} />
+          <Route path="/admin/users" element={<AdminProtected><AdminUsers /></AdminProtected>} />
+          <Route path="/admin/rates" element={<AdminProtected><AdminRates /></AdminProtected>} />
+          <Route path="/admin/settings" element={<AdminProtected><AdminSettings /></AdminProtected>} />
+
+          <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

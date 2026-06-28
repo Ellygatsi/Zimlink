@@ -8,19 +8,26 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      setUser(null);
+      setLoading(false);
+      return;
+    }
+
     try {
       const { data } = await api.get("/auth/me");
       setUser(data);
-    } catch {
+    } catch (_e) {
+      localStorage.removeItem("token");
       setUser(null);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    (async () => {
-      await refresh();
-      setLoading(false);
-    })();
+    refresh();
   }, [refresh]);
 
   const login = async (email, password) => {
@@ -38,7 +45,9 @@ export function AuthProvider({ children }) {
   };
 
   const logout = async () => {
-    try { await api.post("/auth/logout"); } catch (_e) { /* ignore */ }
+    try {
+      await api.post("/auth/logout");
+    } catch (_e) {}
     localStorage.removeItem("token");
     setUser(null);
   };

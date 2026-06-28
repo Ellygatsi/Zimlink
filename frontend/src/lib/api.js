@@ -1,7 +1,7 @@
 import axios from "axios";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-export const API_BASE = `${BACKEND_URL}/api`;
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "http://localhost:8000";
+export const API_BASE = `${BACKEND_URL.replace(/\/$/, "")}/api`;
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -10,18 +10,16 @@ const api = axios.create({
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("token");
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
+  if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
 export default api;
 
 export const ACCENTS = {
-  wallet: "#FFCD00",       // Zimbabwe Gold
-  calling: "#009639",      // Zimbabwe Green
-  marketplace: "#DE2010",  // Zimbabwe Red
-  community: "#0A0A0A",    // Zimbabwe Black
-  alert: "#DE2010",        // flag red
+  wallet: "#16A34A",
+  calling: "#22C55E",
+  marketplace: "#4ADE80",
+  community: "#0A0A0A",
+  alert: "#15803D",
 };

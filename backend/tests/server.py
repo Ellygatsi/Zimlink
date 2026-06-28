@@ -9,14 +9,8 @@ import uuid
 import logging
 import bcrypt
 import jwt as pyjwt
-import random
-import resend
-import smtplib
-from email.message import EmailMessage
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Literal
-import resend
-from email_templates import zimlink_email_template
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, status
 from starlette.middleware.cors import CORSMiddleware
@@ -93,85 +87,6 @@ async def require_admin(current=Depends(get_current_user)) -> dict:
     return current
 
 
-def generate_otp() -> str:
-    return f"{random.randint(0, 999999):06d}"
-
-def code_expiry(minutes: int = 15) -> str:
-    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
-
-def code_is_expired(expires_at: str) -> bool:
-    try:
-        return datetime.fromisoformat(expires_at) < datetime.now(timezone.utc)
-    except Exception:
-        return True
-
-async def save_verification_code(email: str, purpose: str, code: str, extra: Optional[dict] = None) -> None:
-    email = email.lower().strip()
-    await db.verification_codes.delete_many({"email": email, "purpose": purpose})
-    await db.verification_codes.insert_one({
-        "id": new_id(),
-        "email": email,
-        "purpose": purpose,
-        "code_hash": hash_password(code),
-        "extra": extra or {},
-        "attempts": 0,
-        "expires_at": code_expiry(15),
-        "created_at": now_iso(),
-    })
-
-async def verify_code(email: str, purpose: str, code: str) -> dict:
-    email = email.lower().strip()
-    record = await db.verification_codes.find_one({"email": email, "purpose": purpose})
-    if not record:
-        raise HTTPException(status_code=400, detail="Verification code not found or expired")
-
-    if code_is_expired(record.get("expires_at", "")):
-        await db.verification_codes.delete_one({"id": record["id"]})
-        raise HTTPException(status_code=400, detail="Verification code expired")
-
-    attempts = int(record.get("attempts", 0))
-    if attempts >= 5:
-        await db.verification_codes.delete_one({"id": record["id"]})
-        raise HTTPException(status_code=400, detail="Too many incorrect attempts. Request a new code")
-
-    if not verify_password(code, record.get("code_hash", "")):
-        await db.verification_codes.update_one({"id": record["id"]}, {"$inc": {"attempts": 1}})
-        raise HTTPException(status_code=400, detail="Invalid verification code")
-
-    return record
-
-def send_email_code(to_email: str, code: str, purpose: str) -> None:
-    app_name = os.environ.get("APP_NAME", "ZimLink").strip() or "ZimLink"
-    resend_api_key = os.environ.get("RESEND_API_KEY", "").strip()
-    from_email = os.environ.get("FROM_EMAIL", "ZimLink <info@zimlink.me>").strip()
-
-    if not resend_api_key:
-        logger.warning("RESEND_API_KEY is missing. Email was not sent.")
-        logger.warning(f"EMAIL CODE for {to_email} ({purpose}): {code}")
-        return
-
-    resend.api_key = resend_api_key
-
-    subject = f"Your {app_name} verification code"
-    if purpose == "password_reset":
-        subject = f"Reset your {app_name} password"
-
-    html = zimlink_email_template(code, purpose)
-
-    try:
-        resend.Emails.send({
-            "from": from_email,
-            "to": [to_email],
-            "subject": subject,
-            "html": html,
-        })
-
-        logger.info(f"Sent {purpose} code to {to_email} from {from_email}")
-    except Exception as exc:
-        logger.error(f"Could not send Resend email to {to_email}: {exc}")
-        logger.warning(f"EMAIL CODE for {to_email} ({purpose}): {code}")
-
-
 async def get_rate_for_number(to_number: str) -> dict:
     to_number = (to_number or "").strip()
     if to_number and not to_number.startswith("+"):
@@ -201,23 +116,6 @@ class RegisterIn(BaseModel):
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
-
-class RegisterCodeRequestIn(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=6)
-    name: str = Field(min_length=1)
-
-class VerifyRegisterCodeIn(BaseModel):
-    email: EmailStr
-    code: str = Field(min_length=6, max_length=6)
-
-class PasswordResetRequestIn(BaseModel):
-    email: EmailStr
-
-class PasswordResetConfirmIn(BaseModel):
-    email: EmailStr
-    code: str = Field(min_length=6, max_length=6)
-    new_password: str = Field(min_length=6)
 
 class SendMoneyIn(BaseModel):
     recipient_email: EmailStr
@@ -259,127 +157,46 @@ class UpdateRateIn(BaseModel):
 
 
 # ----- Auth Endpoints -----
-@api.post("/auth/register/request-code")
-async def request_register_code(data: RegisterCodeRequestIn):
-    email = data.email.lower().strip()
-
+@api.post("/auth/register")
+async def register(data: RegisterIn, response: Response):
+    email = data.email.lower()
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Email already registered")
-
-    code = generate_otp()
-    await save_verification_code(
-        email=email,
-        purpose="register",
-        code=code,
-        extra={
-            "name": data.name.strip(),
-            "password_hash": hash_password(data.password),
-        },
-    )
-    send_email_code(email, code, "register")
-
-    return {"ok": True, "message": "Verification code sent"}
-
-
-@api.post("/auth/register/verify")
-async def verify_register_code(data: VerifyRegisterCodeIn, response: Response):
-    email = data.email.lower().strip()
-
-    if await db.users.find_one({"email": email}):
-        await db.verification_codes.delete_many({"email": email, "purpose": "register"})
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    record = await verify_code(email, "register", data.code)
-    extra = record.get("extra", {})
-
     user_id = new_id()
     user = {
         "id": user_id,
         "email": email,
-        "name": extra.get("name", "User"),
-        "password_hash": extra.get("password_hash"),
+        "name": data.name,
+        "password_hash": hash_password(data.password),
         "avatar_url": "",
         "wallet_balance": 0.0,
         "phone": "",
         "is_admin": False,
-        "email_verified": True,
         "created_at": now_iso(),
     }
-
-    if not user["password_hash"]:
-        raise HTTPException(status_code=400, detail="Registration session expired. Request a new code")
-
     await db.users.insert_one(user)
-    await db.verification_codes.delete_many({"email": email, "purpose": "register"})
-
     token = create_access_token(user_id, email)
     response.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=7*24*3600, path="/")
-
     user.pop("_id", None)
     user.pop("password_hash", None)
     return {"token": token, "user": user}
-
-
-# Keeps old endpoint available, but now requires email code flow through the frontend.
-@api.post("/auth/register")
-async def register(data: RegisterIn):
-    raise HTTPException(status_code=400, detail="Email verification required. Please request a 6-digit code first")
-
 
 @api.post("/auth/login")
 async def login(data: LoginIn, response: Response):
-    email = data.email.lower().strip()
+    email = data.email.lower()
     user = await db.users.find_one({"email": email})
-
     if not user or not verify_password(data.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-
     token = create_access_token(user["id"], email)
     response.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=7*24*3600, path="/")
-
     user.pop("password_hash", None)
     user.pop("_id", None)
     return {"token": token, "user": user}
-
-
-@api.post("/auth/password-reset/request-code")
-async def request_password_reset_code(data: PasswordResetRequestIn):
-    email = data.email.lower().strip()
-    user = await db.users.find_one({"email": email}, {"_id": 0, "id": 1})
-
-    # For privacy, return OK even if the email is not registered.
-    if user:
-        code = generate_otp()
-        await save_verification_code(email=email, purpose="password_reset", code=code)
-        send_email_code(email, code, "password_reset")
-
-    return {"ok": True, "message": "If this email exists, a reset code has been sent"}
-
-
-@api.post("/auth/password-reset/confirm")
-async def confirm_password_reset(data: PasswordResetConfirmIn):
-    email = data.email.lower().strip()
-    user = await db.users.find_one({"email": email}, {"_id": 0, "id": 1})
-
-    if not user:
-        raise HTTPException(status_code=400, detail="Invalid reset code or email")
-
-    await verify_code(email, "password_reset", data.code)
-
-    await db.users.update_one(
-        {"email": email},
-        {"$set": {"password_hash": hash_password(data.new_password), "updated_at": now_iso()}},
-    )
-    await db.verification_codes.delete_many({"email": email, "purpose": "password_reset"})
-
-    return {"ok": True, "message": "Password reset successful"}
-
 
 @api.post("/auth/logout")
 async def logout(response: Response):
     response.delete_cookie("access_token", path="/")
     return {"ok": True}
-
 
 @api.get("/auth/me")
 async def me(current=Depends(get_current_user)):
@@ -784,88 +601,7 @@ async def post_channel_message(channel_id: str, data: MessageIn, current=Depends
     await db.channel_messages.insert_one(m)
     m.pop("_id", None)
     return m
-class EventIn(BaseModel):
-    title: str = Field(min_length=1)
-    description: str = Field(min_length=1)
-    date_time: str = Field(min_length=1)
-    venue: str = Field(min_length=1)
-    city: str = Field(min_length=1)
-    price: float = Field(ge=0)
-    total_tickets: int = Field(ge=1)
-    image_url: Optional[str] = ""
 
-
-@api.post("/events")
-async def create_event(data: EventIn, current=Depends(get_current_user)):
-    event = {
-        "id": new_id(),
-        "title": data.title,
-        "description": data.description,
-        "date_time": data.date_time,
-        "venue": data.venue,
-        "city": data.city,
-        "price": float(data.price),
-        "total_tickets": int(data.total_tickets),
-        "tickets_sold": 0,
-        "image_url": data.image_url or "",
-        "organizer_id": current["id"],
-        "organizer_name": current["name"],
-        "organizer_email": current["email"],
-        "created_at": now_iso(),
-    }
-    await db.events.insert_one(event)
-    event.pop("_id", None)
-    return event
-
-
-@api.get("/events")
-async def list_events():
-    events = await db.events.find({}, {"_id": 0}).sort("date_time", 1).to_list(300)
-    return events
-
-
-@api.get("/events/{event_id}")
-async def get_event(event_id: str):
-    event = await db.events.find_one({"id": event_id}, {"_id": 0})
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return event
-
-
-@api.post("/events/{event_id}/buy-ticket")
-async def buy_ticket(event_id: str, current=Depends(get_current_user)):
-    event = await db.events.find_one({"id": event_id}, {"_id": 0})
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-
-    if int(event.get("tickets_sold", 0)) >= int(event.get("total_tickets", 0)):
-        raise HTTPException(status_code=400, detail="Event is sold out")
-
-    price = float(event.get("price", 0))
-    user = await db.users.find_one({"id": current["id"]}, {"_id": 0, "wallet_balance": 1})
-
-    if price > 0 and float(user.get("wallet_balance", 0)) < price:
-        raise HTTPException(status_code=400, detail="Insufficient wallet balance")
-
-    if price > 0:
-        await db.users.update_one({"id": current["id"]}, {"$inc": {"wallet_balance": -price}})
-
-    await db.events.update_one({"id": event_id}, {"$inc": {"tickets_sold": 1}})
-
-    ticket = {
-        "id": new_id(),
-        "event_id": event_id,
-        "event_title": event["title"],
-        "buyer_id": current["id"],
-        "buyer_name": current["name"],
-        "buyer_email": current["email"],
-        "price": price,
-        "created_at": now_iso(),
-    }
-
-    await db.event_tickets.insert_one(ticket)
-    ticket.pop("_id", None)
-    return ticket
 
 # ----- VoIP / Telnyx -----
 def get_voice_status():
@@ -1242,8 +978,6 @@ async def on_startup():
     await db.calls.create_index([("user_id", 1), ("created_at", -1)])
     await db.calls.create_index("created_at")
     await db.call_rates.create_index("prefix", unique=True)
-    await db.verification_codes.create_index([("email", 1), ("purpose", 1)])
-    await db.verification_codes.create_index("expires_at")
 
     admin_email = os.environ.get("ADMIN_EMAIL", "").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "")
