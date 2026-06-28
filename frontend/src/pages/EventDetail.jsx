@@ -10,12 +10,12 @@ export default function EventDetail() {
   const [event, setEvent] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
+useEffect(() => {
     api.get(`/events/${id}`).then(({ data }) => setEvent(data)).catch(() => {
       toast.error("Could not load event");
       navigate("/events");
     });
-  }, [id]);
+  }, [id, navigate]);
 
   if (!event) return <div className="p-6 text-sm text-neutral-500">Loading…</div>;
 
