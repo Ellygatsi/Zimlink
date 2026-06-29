@@ -1229,6 +1229,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(api)
+
 
 @app.on_event("startup")
 async def on_startup():
