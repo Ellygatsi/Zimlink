@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import api, { ACCENTS } from "@/lib/api";
+import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { ArrowRight, Phone, Wallet, Storefront, ChatsCircle } from "@phosphor-icons/react";
 
@@ -13,83 +13,81 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="space-y-6" data-testid="home-page">
+    <div className="space-y-6 bg-black min-h-screen p-4 md:p-8" data-testid="home-page">
       <div>
-        <p className="overline text-neutral-500">SUPER HUB</p>
-        <h1 className="text-5xl md:text-7xl font-black tracking-tighter mt-2">
+        <p className="text-xs font-medium tracking-widest text-green-500 uppercase">Super hub</p>
+        <h1 className="text-4xl md:text-6xl font-medium tracking-tight mt-2 text-white">
           Hey, {user?.name?.split(" ")[0] || "friend"}.
         </h1>
-        <p className="text-base md:text-lg text-neutral-700 mt-3 max-w-xl">
+        <p className="text-sm md:text-base text-neutral-400 mt-3 max-w-xl">
           Stay connected to Zimbabwe — calls, money, marketplace, and community in one place.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
-        {/* Wallet — big tile */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Wallet — big hero tile */}
         <Link
           to="/wallet"
-          className="nb-card p-6 md:col-span-2 md:row-span-2 transition-all duration-150 hover:-translate-y-1 hover:shadow-[6px_6px_0px_rgba(0,0,0,1)]"
-          style={{ backgroundColor: ACCENTS.wallet }}
+          className="rounded-2xl p-6 md:col-span-2 md:row-span-2 bg-green-600 transition-transform hover:-translate-y-1"
           data-testid="home-wallet-tile"
         >
           <div className="flex items-start justify-between">
             <div>
-              <p className="overline">WALLET BALANCE</p>
-              <p className="text-5xl md:text-7xl font-black tracking-tighter mt-3 mono">
+              <p className="text-xs font-medium tracking-widest text-black/70 uppercase">Wallet balance</p>
+              <p className="text-5xl md:text-7xl font-medium tracking-tight mt-3 text-black">
                 ${(stats?.balance ?? 0).toFixed(2)}
               </p>
-              <p className="text-sm mt-3 font-medium">{stats?.tx_count ?? 0} transactions</p>
+              <p className="text-sm mt-3 font-medium text-black/70">{stats?.tx_count ?? 0} transactions</p>
             </div>
-            <Wallet size={40} weight="bold" />
+            <Wallet size={36} weight="bold" className="text-black" />
           </div>
-          <div className="mt-8 flex items-center gap-2 font-bold">
-            Send & Receive <ArrowRight size={18} weight="bold" />
+          <div className="mt-8 inline-flex items-center gap-2 font-medium text-black bg-black/10 rounded-full px-4 py-2 text-sm">
+            Send & receive <ArrowRight size={16} weight="bold" />
           </div>
         </Link>
 
         {/* Calls */}
         <Link
           to="/calls"
-          className="nb-card p-6 transition-all hover:-translate-y-1 hover:shadow-[6px_6px_0px_rgba(0,0,0,1)] text-white"
-          style={{ backgroundColor: ACCENTS.calling }}
+          className="rounded-2xl p-6 bg-neutral-900 border border-neutral-800 transition-transform hover:-translate-y-1"
           data-testid="home-calls-tile"
         >
-          <Phone size={32} weight="bold" />
-          <p className="overline mt-4">CALLS</p>
-          <p className="text-3xl font-black mt-1">{stats?.call_count ?? 0}</p>
-          <p className="text-xs mt-1 opacity-80">Dial anyone, anywhere</p>
+          <Phone size={28} weight="bold" className="text-green-500" />
+          <p className="text-xs font-medium tracking-widest text-neutral-500 uppercase mt-4">Calls</p>
+          <p className="text-3xl font-medium mt-1 text-white">{stats?.call_count ?? 0}</p>
+          <p className="text-xs mt-1 text-neutral-500">Dial anyone, anywhere</p>
         </Link>
 
         {/* Community */}
         <Link
           to="/community"
-          className="nb-card p-6 transition-all hover:-translate-y-1 hover:shadow-[6px_6px_0px_rgba(0,0,0,1)] text-white"
-          style={{ backgroundColor: ACCENTS.community }}
+          className="rounded-2xl p-6 bg-neutral-900 border border-neutral-800 transition-transform hover:-translate-y-1"
           data-testid="home-community-tile"
         >
-          <ChatsCircle size={32} weight="bold" />
-          <p className="overline mt-4">POSTS</p>
-          <p className="text-3xl font-black mt-1">{stats?.post_count ?? 0}</p>
-          <p className="text-xs mt-1">Join the chatter</p>
+          <ChatsCircle size={28} weight="bold" className="text-green-500" />
+          <p className="text-xs font-medium tracking-widest text-neutral-500 uppercase mt-4">Posts</p>
+          <p className="text-3xl font-medium mt-1 text-white">{stats?.post_count ?? 0}</p>
+          <p className="text-xs mt-1 text-neutral-500">Join the chatter</p>
         </Link>
 
         {/* Marketplace */}
         <Link
           to="/marketplace"
-          className="nb-card p-6 md:col-span-3 transition-all hover:-translate-y-1 hover:shadow-[6px_6px_0px_rgba(0,0,0,1)] text-white"
-          style={{ backgroundColor: ACCENTS.marketplace }}
+          className="rounded-2xl p-6 md:col-span-3 bg-neutral-900 border border-neutral-800 transition-transform hover:-translate-y-1"
           data-testid="home-marketplace-tile"
         >
           <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
             <div>
-              <Storefront size={32} weight="bold" />
-              <p className="overline mt-4">MARKETPLACE</p>
-              <p className="text-3xl font-black mt-1">{stats?.listing_count ?? 0} listings live</p>
+              <Storefront size={28} weight="bold" className="text-green-500" />
+              <p className="text-xs font-medium tracking-widest text-neutral-500 uppercase mt-4">Marketplace</p>
+              <p className="text-2xl font-medium mt-1 text-white">{stats?.listing_count ?? 0} listings live</p>
               {stats?.recent_listing && (
-                <p className="text-sm mt-2 font-medium">Latest: {stats.recent_listing.title}</p>
+                <p className="text-sm mt-2 text-neutral-400">Latest: {stats.recent_listing.title}</p>
               )}
             </div>
-            <div className="nb-btn bg-white text-black">Browse <ArrowRight size={16} weight="bold" /></div>
+            <div className="inline-flex items-center gap-2 bg-green-600 text-black rounded-full px-4 py-2 text-sm font-medium">
+              Browse <ArrowRight size={16} weight="bold" />
+            </div>
           </div>
         </Link>
       </div>
