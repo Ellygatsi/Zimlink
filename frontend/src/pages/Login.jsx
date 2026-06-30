@@ -86,90 +86,128 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-5 relative">
-      <div className="fixed top-0 left-0 right-0 z-50 flex h-[4px]">
-        <div className="flex-1" style={{ background: "#009639" }} />
-        <div className="flex-1" style={{ background: "#FFCD00" }} />
-        <div className="flex-1" style={{ background: "#DE2010" }} />
-        <div className="flex-1" style={{ background: "#0A0A0A" }} />
-      </div>
-
+    <div className="min-h-screen flex items-center justify-center p-5 relative bg-white dark:bg-black transition-colors">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center flex flex-col items-center">
-          <img
-            src={logo}
-            alt="ZimLink"
-            className="w-80 md:w-[360px] mx-auto object-contain drop-shadow-lg -mb-18"
-          />
-
-          <p className="overline text-neutral-700 mt-0 tracking-[0.2em]">
-            CONNECTING ZIMBABWE. CONNECTING YOU.
+          <img src={logo} alt="ZimLink" className="w-64 md:w-80 mx-auto object-contain -mb-10" />
+          <p className="text-[11px] tracking-[0.2em] text-neutral-500 mt-0 uppercase">
+            Connecting Zimbabwe. Connecting you.
           </p>
         </div>
 
-        <form onSubmit={submit} className="nb-card p-8 space-y-5 bg-white/95 backdrop-blur-sm" data-testid="login-form">
-          <h2 className="text-3xl font-black">Welcome back.</h2>
+        <form
+          onSubmit={submit}
+          className="rounded-2xl p-8 space-y-5 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
+          data-testid="login-form"
+        >
+          <h2 className="text-2xl font-medium text-black dark:text-white">Welcome back.</h2>
 
           <div>
-            <label className="overline">Email</label>
-            <input type="email" className="nb-input mt-2" value={email} onChange={(e) => setEmail(e.target.value)} required data-testid="login-email-input" />
+            <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">Email</label>
+            <input
+              type="email"
+              className="w-full mt-2 h-11 rounded-lg px-3 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 outline-none focus:border-green-600 text-black dark:text-white"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              data-testid="login-email-input"
+            />
           </div>
 
           <div>
-            <label className="overline">Password</label>
-            <input type="password" className="nb-input mt-2" value={password} onChange={(e) => setPassword(e.target.value)} required data-testid="login-password-input" />
+            <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">Password</label>
+            <input
+              type="password"
+              className="w-full mt-2 h-11 rounded-lg px-3 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 outline-none focus:border-green-600 text-black dark:text-white"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              data-testid="login-password-input"
+            />
           </div>
 
-          <button type="submit" disabled={busy} className="nb-btn w-full bg-[#22C55E] text-white text-base h-12" data-testid="login-submit-button">
-            {busy ? "Signing in…" : "Sign In"}
+          <button
+            type="submit"
+            disabled={busy}
+            className="w-full h-12 rounded-xl bg-green-600 text-black font-medium disabled:opacity-50"
+            data-testid="login-submit-button"
+          >
+            {busy ? "Signing in…" : "Sign in"}
           </button>
 
-          <button type="button" onClick={openReset} className="w-full text-sm font-black underline" data-testid="forgot-password-button">
+          <button
+            type="button"
+            onClick={openReset}
+            className="w-full text-sm font-medium text-green-600 dark:text-green-500"
+            data-testid="forgot-password-button"
+          >
             Forgot password?
           </button>
 
-          <p className="text-sm text-center">
-            New here? <Link to="/register" className="font-black underline" data-testid="go-to-register">Create an account</Link>
+          <p className="text-sm text-center text-neutral-500">
+            New here?{" "}
+            <Link to="/register" className="font-medium text-green-600 dark:text-green-500" data-testid="go-to-register">
+              Create an account
+            </Link>
           </p>
         </form>
       </div>
 
       {showReset && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-end md:items-center justify-center p-4" onClick={() => setShowReset(false)}>
+        <div
+          className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center p-4"
+          onClick={() => setShowReset(false)}
+        >
           <form
             onSubmit={resetStep === "email" ? requestResetCode : confirmReset}
             onClick={(e) => e.stopPropagation()}
-            className="nb-card p-6 w-full max-w-md bg-white space-y-4"
+            className="rounded-2xl p-6 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 space-y-4"
             data-testid="password-reset-modal"
           >
             <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-black">Reset password</h2>
-              <button type="button" className="font-black text-xl" onClick={() => setShowReset(false)}>×</button>
+              <h2 className="text-xl font-medium text-black dark:text-white">Reset password</h2>
+              <button type="button" className="text-xl text-neutral-500" onClick={() => setShowReset(false)}>
+                ×
+              </button>
             </div>
 
             {resetStep === "email" ? (
               <>
-                <p className="text-sm text-neutral-600">Enter your email and we will send a 6-digit reset code.</p>
+                <p className="text-sm text-neutral-500">Enter your email and we will send a 6-digit reset code.</p>
 
                 <div>
-                  <label className="overline">Email</label>
-                  <input type="email" className="nb-input mt-2" value={resetEmail} onChange={(e) => setResetEmail(e.target.value)} required data-testid="reset-email-input" />
+                  <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">Email</label>
+                  <input
+                    type="email"
+                    className="w-full mt-2 h-11 rounded-lg px-3 bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 outline-none focus:border-green-600 text-black dark:text-white"
+                    value={resetEmail}
+                    onChange={(e) => setResetEmail(e.target.value)}
+                    required
+                    data-testid="reset-email-input"
+                  />
                 </div>
 
-                <button type="submit" disabled={resetBusy} className="nb-btn w-full bg-[#22C55E] text-white h-12" data-testid="send-reset-code-button">
-                  {resetBusy ? "Sending…" : "Send Reset Code"}
+                <button
+                  type="submit"
+                  disabled={resetBusy}
+                  className="w-full h-12 rounded-xl bg-green-600 text-black font-medium disabled:opacity-50"
+                  data-testid="send-reset-code-button"
+                >
+                  {resetBusy ? "Sending…" : "Send reset code"}
                 </button>
               </>
             ) : (
               <>
-                <p className="text-sm text-neutral-600">Enter the code sent to <span className="font-bold">{resetEmail}</span>, then choose a new password.</p>
+                <p className="text-sm text-neutral-500">
+                  Enter the code sent to <span className="font-medium text-black dark:text-white">{resetEmail}</span>, then choose a new password.
+                </p>
 
                 <div>
-                  <label className="overline">6-digit code</label>
+                  <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">6-digit code</label>
                   <input
                     inputMode="numeric"
                     maxLength={6}
-                    className="nb-input mt-2 text-center text-2xl font-black tracking-[0.4em] mono"
+                    className="w-full mt-2 h-14 rounded-lg text-center text-2xl font-medium tracking-[0.4em] bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 outline-none focus:border-green-600 text-black dark:text-white"
                     value={resetCode}
                     onChange={(e) => setResetCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                     required
@@ -178,15 +216,33 @@ export default function Login() {
                 </div>
 
                 <div>
-                  <label className="overline">New password</label>
-                  <input type="password" minLength={6} className="nb-input mt-2" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required data-testid="new-password-input" />
+                  <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">New password</label>
+                  <input
+                    type="password"
+                    minLength={6}
+                    className="w-full mt-2 h-11 rounded-lg px-3 bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 outline-none focus:border-green-600 text-black dark:text-white"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    required
+                    data-testid="new-password-input"
+                  />
                 </div>
 
-                <button type="submit" disabled={resetBusy || resetCode.length !== 6} className="nb-btn w-full bg-[#22C55E] text-white h-12" data-testid="confirm-reset-button">
-                  {resetBusy ? "Resetting…" : "Reset Password"}
+                <button
+                  type="submit"
+                  disabled={resetBusy || resetCode.length !== 6}
+                  className="w-full h-12 rounded-xl bg-green-600 text-black font-medium disabled:opacity-50"
+                  data-testid="confirm-reset-button"
+                >
+                  {resetBusy ? "Resetting…" : "Reset password"}
                 </button>
 
-                <button type="button" onClick={requestResetCode} disabled={resetBusy} className="w-full text-sm font-black underline">
+                <button
+                  type="button"
+                  onClick={requestResetCode}
+                  disabled={resetBusy}
+                  className="w-full text-sm font-medium text-green-600 dark:text-green-500"
+                >
                   Resend code
                 </button>
               </>

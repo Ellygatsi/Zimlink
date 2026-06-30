@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import api, { ACCENTS } from "@/lib/api";
+import api from "@/lib/api";
 import { Plus, X, MagnifyingGlass, UploadSimple, Image } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
@@ -14,10 +14,10 @@ export default function Marketplace() {
     description: "",
     price: "",
     category: "goods",
-    image_url: "",      // kept for backward compat — stores first image
-    images: [],         // array of up to 5 base64 strings
+    image_url: "",
+    images: [],
   });
-  const [previews, setPreviews] = useState([]);   // base64 previews for the upload UI
+  const [previews, setPreviews] = useState([]);
   const [busy, setBusy] = useState(false);
 
   const load = async (cat = filter, query = q) => {
@@ -29,17 +29,13 @@ export default function Marketplace() {
   };
 
   useEffect(() => {
-    api
-      .get("/marketplace/listings")
-      .then(({ data }) => setItems(data))
-      .catch(() => {});
+    api.get("/marketplace/listings").then(({ data }) => setItems(data)).catch(() => {});
   }, []);
 
   const handlePictureUpload = (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
 
-    // How many slots are still available?
     const slotsLeft = 5 - previews.length;
     const toProcess = files.slice(0, slotsLeft);
 
@@ -64,7 +60,6 @@ export default function Marketplace() {
       reader.readAsDataURL(file);
     });
 
-    // Reset input so re-selecting same file works
     e.target.value = "";
   };
 
@@ -112,7 +107,6 @@ export default function Marketplace() {
     load(filter, q);
   };
 
-  // Helper: get images array from a listing (handles old single-image listings)
   const getImages = (item) => {
     if (Array.isArray(item.images) && item.images.length > 0) return item.images;
     if (item.image_url) return [item.image_url];
@@ -120,30 +114,25 @@ export default function Marketplace() {
   };
 
   return (
-    <div className="space-y-6" data-testid="marketplace-page">
-      {/* Header */}
+    <div className="space-y-5 md:space-y-6" data-testid="marketplace-page">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
-          <p className="overline text-neutral-500">SHOP & SELL</p>
-          <h1 className="text-5xl md:text-6xl font-black tracking-tighter mt-2">
-            Marketplace.
-          </h1>
+          <p className="text-[10px] md:text-xs font-medium tracking-widest text-green-500 uppercase">Shop & sell</p>
+          <h1 className="text-3xl md:text-6xl font-medium tracking-tight mt-1.5 md:mt-2 text-black dark:text-white">Marketplace.</h1>
         </div>
         <button
           onClick={() => setShowCreate(true)}
-          className="nb-btn text-white"
-          style={{ backgroundColor: ACCENTS.marketplace }}
+          className="inline-flex items-center gap-2 rounded-full bg-green-600 text-black px-4 py-2 text-sm font-medium w-fit"
           data-testid="new-listing-button"
         >
-          <Plus size={18} weight="bold" /> New Listing
+          <Plus size={16} weight="bold" /> New listing
         </button>
       </div>
 
-      {/* Search */}
       <form onSubmit={search} className="flex gap-2">
         <div className="flex-1 relative">
           <input
-            className="nb-input pl-11"
+            className="w-full h-11 rounded-lg pl-11 pr-3 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 outline-none focus:border-green-600 text-black dark:text-white"
             placeholder="Search listings…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -152,15 +141,14 @@ export default function Marketplace() {
           <MagnifyingGlass
             size={18}
             weight="bold"
-            className="absolute left-4 top-1/2 -translate-y-1/2"
+            className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-500"
           />
         </div>
-        <button className="nb-btn bg-black text-white" data-testid="market-search-button">
+        <button className="rounded-lg px-5 bg-black dark:bg-white text-white dark:text-black font-medium" data-testid="market-search-button">
           Search
         </button>
       </form>
 
-      {/* Filters */}
       <div className="flex gap-2 flex-wrap">
         {[
           { key: "all", label: "All" },
@@ -171,25 +159,20 @@ export default function Marketplace() {
             key={t.key}
             onClick={() => { setFilter(t.key); load(t.key, q); }}
             data-testid={`market-filter-${t.key}`}
-            className={`nb-btn text-sm ${filter === t.key ? "" : "bg-white"}`}
-            style={
+            className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
               filter === t.key
-                ? { backgroundColor: ACCENTS.marketplace, color: "white" }
-                : {}
-            }
+                ? "bg-green-600 text-black"
+                : "bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-black dark:text-white"
+            }`}
           >
             {t.label}
           </button>
         ))}
       </div>
 
-      {/* Listings grid */}
-      <div
-        className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
-        data-testid="listings-grid"
-      >
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="listings-grid">
         {items.length === 0 && (
-          <div className="col-span-full nb-card p-6 text-sm text-neutral-500">
+          <div className="col-span-full rounded-xl p-6 text-sm text-neutral-500 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
             No listings yet. Be the first to post!
           </div>
         )}
@@ -200,41 +183,27 @@ export default function Marketplace() {
             <Link
               key={item.id}
               to={`/marketplace/${item.id}`}
-              className="nb-card bg-white transition-all hover:-translate-y-1 hover:shadow-[6px_6px_0px_rgba(0,0,0,1)] overflow-hidden"
+              className="rounded-2xl bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 overflow-hidden transition-transform hover:-translate-y-1"
               data-testid={`listing-${item.id}`}
             >
-              {/* Image strip — shown only when there are images */}
               {imgs.length > 0 && (
-                <div className="flex h-40 overflow-hidden border-b-2 border-black">
-                  {/* Primary image takes more space */}
+                <div className="flex h-40 overflow-hidden">
                   <div
-                    className="flex-1 bg-neutral-100"
-                    style={{
-                      backgroundImage: `url(${imgs[0]})`,
-                      backgroundSize: "cover",
-                      backgroundPosition: "center",
-                    }}
+                    className="flex-1 bg-neutral-200 dark:bg-neutral-800"
+                    style={{ backgroundImage: `url(${imgs[0]})`, backgroundSize: "cover", backgroundPosition: "center" }}
                   />
-                  {/* Thumbnails for extra images */}
                   {imgs.length > 1 && (
-                    <div className="flex flex-col w-16 border-l-2 border-black">
+                    <div className="flex flex-col w-16">
                       {imgs.slice(1, 4).map((src, i) => (
                         <div
                           key={i}
-                          className="flex-1 bg-neutral-100 border-b border-black last:border-b-0"
-                          style={{
-                            backgroundImage: `url(${src})`,
-                            backgroundSize: "cover",
-                            backgroundPosition: "center",
-                          }}
+                          className="flex-1 bg-neutral-200 dark:bg-neutral-800 border-l border-neutral-300 dark:border-neutral-700"
+                          style={{ backgroundImage: `url(${src})`, backgroundSize: "cover", backgroundPosition: "center" }}
                         />
                       ))}
-                      {/* "+N more" badge if there are more than 4 images */}
                       {imgs.length > 4 && (
-                        <div className="flex-1 bg-black flex items-center justify-center border-b border-black last:border-b-0">
-                          <span className="text-white text-xs font-black">
-                            +{imgs.length - 4}
-                          </span>
+                        <div className="flex-1 bg-black flex items-center justify-center">
+                          <span className="text-white text-xs font-medium">+{imgs.length - 4}</span>
                         </div>
                       )}
                     </div>
@@ -242,38 +211,26 @@ export default function Marketplace() {
                 </div>
               )}
 
-              {/* Card body */}
               <div className="p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1">
-                    <p className="font-black text-lg line-clamp-1">{item.title}</p>
-                    <p className="text-xs text-neutral-500 line-clamp-1">
-                      by {item.seller_name}
-                    </p>
+                    <p className="font-medium text-base line-clamp-1 text-black dark:text-white">{item.title}</p>
+                    <p className="text-xs text-neutral-500 line-clamp-1">by {item.seller_name}</p>
                   </div>
-                  <span className="nb-pill bg-white text-xs">${item.price}</span>
+                  <span className="rounded-full px-2.5 py-1 text-xs font-medium bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-black dark:text-white">
+                    ${item.price}
+                  </span>
                 </div>
 
-                <p className="text-sm text-neutral-600 line-clamp-2 mt-3">
-                  {item.description}
-                </p>
+                <p className="text-sm text-neutral-500 line-clamp-2 mt-3">{item.description}</p>
 
                 <div className="flex items-center justify-between mt-4">
-                  <span
-                    className="nb-pill text-xs"
-                    style={{
-                      backgroundColor:
-                        item.category === "goods"
-                          ? ACCENTS.marketplace
-                          : ACCENTS.community,
-                      color: "white",
-                    }}
-                  >
+                  <span className="rounded-full px-3 py-1 text-xs font-medium bg-green-600 text-black">
                     {item.category}
                   </span>
 
                   {imgs.length > 0 && (
-                    <span className="flex items-center gap-1 text-xs font-bold text-neutral-400">
+                    <span className="flex items-center gap-1 text-xs font-medium text-neutral-400">
                       <Image size={13} weight="bold" />
                       {imgs.length}
                     </span>
@@ -285,30 +242,26 @@ export default function Marketplace() {
         })}
       </div>
 
-      {/* Create modal */}
       {showCreate && (
-        <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-end md:items-center justify-center p-4"
-          onClick={() => setShowCreate(false)}
-        >
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center p-4" onClick={() => setShowCreate(false)}>
           <form
             onSubmit={submit}
             onClick={(e) => e.stopPropagation()}
-            className="nb-card p-6 w-full max-w-md bg-white space-y-4 max-h-[90vh] overflow-y-auto"
+            className="rounded-2xl p-6 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 space-y-4 max-h-[90vh] overflow-y-auto"
             data-testid="new-listing-modal"
           >
             <div className="flex justify-between items-center">
-              <h2 className="text-2xl font-black">New listing</h2>
-              <button type="button" onClick={() => setShowCreate(false)}>
-                <X size={22} weight="bold" />
+              <h2 className="text-xl font-medium text-black dark:text-white">New listing</h2>
+              <button type="button" onClick={() => setShowCreate(false)} className="text-neutral-500">
+                <X size={20} weight="bold" />
               </button>
             </div>
 
             <div>
-              <label className="overline">Title</label>
+              <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">Title</label>
               <input
                 required
-                className="nb-input mt-2"
+                className="w-full mt-2 h-11 rounded-lg px-3 bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 outline-none focus:border-green-600 text-black dark:text-white"
                 value={form.title}
                 onChange={(e) => setForm({ ...form, title: e.target.value })}
                 data-testid="listing-title-input"
@@ -316,11 +269,11 @@ export default function Marketplace() {
             </div>
 
             <div>
-              <label className="overline">Description</label>
+              <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">Description</label>
               <textarea
                 required
                 rows={3}
-                className="nb-textarea mt-2"
+                className="w-full mt-2 rounded-lg p-3 bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 outline-none focus:border-green-600 text-black dark:text-white resize-none"
                 value={form.description}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
                 data-testid="listing-description-input"
@@ -329,22 +282,22 @@ export default function Marketplace() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="overline">Price ($)</label>
+                <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">Price ($)</label>
                 <input
                   type="number"
                   min="0"
                   step="0.01"
                   required
-                  className="nb-input mt-2 mono"
+                  className="w-full mt-2 h-11 rounded-lg px-3 bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 outline-none focus:border-green-600 text-black dark:text-white"
                   value={form.price}
                   onChange={(e) => setForm({ ...form, price: e.target.value })}
                   data-testid="listing-price-input"
                 />
               </div>
               <div>
-                <label className="overline">Category</label>
+                <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">Category</label>
                 <select
-                  className="nb-input mt-2"
+                  className="w-full mt-2 h-11 rounded-lg px-3 bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 outline-none focus:border-green-600 text-black dark:text-white"
                   value={form.category}
                   onChange={(e) => setForm({ ...form, category: e.target.value })}
                   data-testid="listing-category-select"
@@ -355,26 +308,17 @@ export default function Marketplace() {
               </div>
             </div>
 
-            {/* Multi-image upload */}
             <div>
               <div className="flex items-center justify-between">
-                <label className="overline">Pictures</label>
+                <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">Pictures</label>
                 <span className="text-xs text-neutral-400">{previews.length} / 5</span>
               </div>
 
-              {/* Preview grid */}
               {previews.length > 0 && (
                 <div className="grid grid-cols-5 gap-2 mt-2">
                   {previews.map((src, i) => (
-                    <div
-                      key={i}
-                      className="relative aspect-square nb-card overflow-hidden"
-                    >
-                      <img
-                        src={src}
-                        alt={`Preview ${i + 1}`}
-                        className="w-full h-full object-cover"
-                      />
+                    <div key={i} className="relative aspect-square rounded-lg overflow-hidden border border-neutral-200 dark:border-neutral-700">
+                      <img src={src} alt={`Preview ${i + 1}`} className="w-full h-full object-cover" />
                       <button
                         type="button"
                         onClick={() => removePreview(i)}
@@ -384,7 +328,7 @@ export default function Marketplace() {
                         <X size={9} weight="bold" />
                       </button>
                       {i === 0 && (
-                        <span className="absolute bottom-0 left-0 right-0 text-center text-white text-[8px] font-black bg-black/60 py-0.5">
+                        <span className="absolute bottom-0 left-0 right-0 text-center text-white text-[8px] font-medium bg-black/60 py-0.5">
                           MAIN
                         </span>
                       )}
@@ -393,14 +337,13 @@ export default function Marketplace() {
                 </div>
               )}
 
-              {/* Upload button — hidden when at limit */}
               {previews.length < 5 && (
                 <label
-                  className="nb-btn w-full mt-2 h-12 bg-white cursor-pointer"
+                  className="w-full mt-2 h-12 rounded-lg bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 cursor-pointer flex items-center justify-center gap-2 text-sm font-medium text-black dark:text-white"
                   data-testid="listing-upload-picture-button"
                 >
                   <UploadSimple size={18} weight="bold" />
-                  {previews.length === 0 ? "Upload Pictures" : "Add More"}
+                  {previews.length === 0 ? "Upload pictures" : "Add more"}
                   <input
                     type="file"
                     accept="image/*"
@@ -412,18 +355,15 @@ export default function Marketplace() {
                 </label>
               )}
 
-              <p className="text-xs text-neutral-400 mt-1">
-                Up to 5 pictures. First image is the cover.
-              </p>
+              <p className="text-xs text-neutral-500 mt-1">Up to 5 pictures. First image is the cover.</p>
             </div>
 
             <button
               disabled={busy}
-              className="nb-btn w-full h-12 text-white"
-              style={{ backgroundColor: ACCENTS.marketplace }}
+              className="w-full h-12 rounded-xl bg-green-600 text-black font-medium disabled:opacity-50"
               data-testid="listing-submit-button"
             >
-              {busy ? "Posting…" : "Post Listing"}
+              {busy ? "Posting…" : "Post listing"}
             </button>
           </form>
         </div>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import api, { ACCENTS } from "@/lib/api";
+import api from "@/lib/api";
 import { ArrowLeft, Trash, EnvelopeSimple } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
@@ -40,39 +40,51 @@ export default function MarketplaceDetail() {
 
   return (
     <div className="space-y-5" data-testid="listing-detail-page">
-      <Link to="/marketplace" className="inline-flex items-center gap-1 text-sm font-bold" data-testid="back-to-market">
+      <Link
+        to="/marketplace"
+        className="inline-flex items-center gap-1 text-sm font-medium text-neutral-500 hover:text-black dark:hover:text-white"
+        data-testid="back-to-market"
+      >
         <ArrowLeft size={16} weight="bold" /> Back
       </Link>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="nb-card overflow-hidden">
-          <div className="aspect-square bg-neutral-100">
+        <div className="rounded-2xl overflow-hidden bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+          <div className="aspect-square bg-neutral-200 dark:bg-neutral-800">
             {item.image_url ? <img src={item.image_url} alt={item.title} className="w-full h-full object-cover" /> : null}
           </div>
         </div>
         <div className="space-y-4">
-          <span className="nb-pill" style={{ backgroundColor: item.category === "goods" ? ACCENTS.marketplace : ACCENTS.community, color: "white" }}>
+          <span className="inline-block rounded-full px-3 py-1 text-xs font-medium bg-green-600 text-black">
             {item.category}
           </span>
-          <h1 className="text-4xl md:text-5xl font-black tracking-tighter">{item.title}</h1>
-          <p className="text-4xl font-black mono">${item.price}</p>
-          <p className="text-base text-neutral-700 whitespace-pre-wrap">{item.description}</p>
-          <div className="nb-card p-4 flex items-center gap-3">
-            <div className="w-12 h-12 rounded-full border-2 border-black bg-[#FFCD00] flex items-center justify-center font-black">
+          <h1 className="text-3xl md:text-5xl font-medium tracking-tight text-black dark:text-white">{item.title}</h1>
+          <p className="text-3xl font-medium text-black dark:text-white">${item.price}</p>
+          <p className="text-sm text-neutral-500 whitespace-pre-wrap">{item.description}</p>
+          <div className="rounded-xl p-4 flex items-center gap-3 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+            <div className="w-11 h-11 rounded-full bg-green-600 flex items-center justify-center font-medium text-black">
               {item.seller_name?.[0]?.toUpperCase()}
             </div>
             <div className="flex-1">
-              <p className="font-bold text-sm">{item.seller_name}</p>
+              <p className="font-medium text-sm text-black dark:text-white">{item.seller_name}</p>
               <p className="text-xs text-neutral-500">{item.seller_email}</p>
             </div>
           </div>
           <div className="flex gap-2">
             {item.seller_id !== user?.id ? (
-              <button onClick={contactSeller} className="nb-btn flex-1 text-white h-12" style={{ backgroundColor: ACCENTS.marketplace }} data-testid="contact-seller-button">
+              <button
+                onClick={contactSeller}
+                className="flex-1 h-12 rounded-xl bg-green-600 text-black font-medium flex items-center justify-center gap-2"
+                data-testid="contact-seller-button"
+              >
                 <EnvelopeSimple size={18} weight="bold" /> Contact seller
               </button>
             ) : (
-              <button onClick={handleDelete} className="nb-btn flex-1 text-white h-12" style={{ backgroundColor: ACCENTS.alert }} data-testid="delete-listing-button">
+              <button
+                onClick={handleDelete}
+                className="flex-1 h-12 rounded-xl bg-red-600 text-white font-medium flex items-center justify-center gap-2"
+                data-testid="delete-listing-button"
+              >
                 <Trash size={18} weight="bold" /> Delete listing
               </button>
             )}
