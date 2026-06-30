@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider } from "@/context/AuthContext";
+import { ThemeProvider } from "@/context/ThemeContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
@@ -38,47 +39,49 @@ function AdminProtected({ children }) {
 
 function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <Toaster
-          position="top-right"
-          toastOptions={{
-            style: {
-              border: "2px solid black",
-              borderRadius: "12px",
-              boxShadow: "4px 4px 0px rgba(0,0,0,1)",
-              fontFamily: "Satoshi, sans-serif",
-              fontWeight: 700,
-            },
-          }}
-        />
+    <ThemeProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <Toaster
+            position="top-right"
+            toastOptions={{
+              style: {
+                border: "2px solid black",
+                borderRadius: "12px",
+                boxShadow: "4px 4px 0px rgba(0,0,0,1)",
+                fontFamily: "Satoshi, sans-serif",
+                fontWeight: 700,
+              },
+            }}
+          />
 
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
 
-          <Route path="/" element={<Navigate to="/home" replace />} />
-          <Route path="/home" element={<Protected><Home /></Protected>} />
-          <Route path="/calls" element={<Protected><Calls /></Protected>} />
-          <Route path="/wallet" element={<Protected><WalletPage /></Protected>} />
+            <Route path="/" element={<Navigate to="/home" replace />} />
+            <Route path="/home" element={<Protected><Home /></Protected>} />
+            <Route path="/calls" element={<Protected><Calls /></Protected>} />
+            <Route path="/wallet" element={<Protected><WalletPage /></Protected>} />
 
-          <Route path="/marketplace" element={<Protected><Marketplace /></Protected>} />
-          <Route path="/marketplace/:id" element={<Protected><MarketplaceDetail /></Protected>} />
+            <Route path="/marketplace" element={<Protected><Marketplace /></Protected>} />
+            <Route path="/marketplace/:id" element={<Protected><MarketplaceDetail /></Protected>} />
 
-          <Route path="/events" element={<Protected><Events /></Protected>} />
-          <Route path="/events/:id" element={<Protected><EventDetail /></Protected>} />
+            <Route path="/events" element={<Protected><Events /></Protected>} />
+            <Route path="/events/:id" element={<Protected><EventDetail /></Protected>} />
 
-          <Route path="/community" element={<Protected><Community /></Protected>} />
+            <Route path="/community" element={<Protected><Community /></Protected>} />
 
-          <Route path="/admin" element={<AdminProtected><AdminDashboard /></AdminProtected>} />
-          <Route path="/admin/users" element={<AdminProtected><AdminUsers /></AdminProtected>} />
-          <Route path="/admin/rates" element={<AdminProtected><AdminRates /></AdminProtected>} />
-          <Route path="/admin/settings" element={<AdminProtected><AdminSettings /></AdminProtected>} />
+            <Route path="/admin" element={<AdminProtected><AdminDashboard /></AdminProtected>} />
+            <Route path="/admin/users" element={<AdminProtected><AdminUsers /></AdminProtected>} />
+            <Route path="/admin/rates" element={<AdminProtected><AdminRates /></AdminProtected>} />
+            <Route path="/admin/settings" element={<AdminProtected><AdminSettings /></AdminProtected>} />
 
-          <Route path="*" element={<Navigate to="/home" replace />} />
-        </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+            <Route path="*" element={<Navigate to="/home" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }
 
