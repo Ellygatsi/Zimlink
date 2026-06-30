@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import api, { ACCENTS } from "@/lib/api";
-import { Phone, PhoneDisconnect, CheckCircle, Warning } from "@phosphor-icons/react";
+import api from "@/lib/api";
+import { Phone, PhoneDisconnect, CheckCircle, XCircle } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { useTelnyxDevice } from "@/hooks/useTelnyxDevice";
 
@@ -9,11 +9,11 @@ export default function Calls() {
   const [history, setHistory] = useState([]);
   const [quote, setQuote] = useState(null);
   const [voiceConfig, setVoiceConfig] = useState(null);
+  const [noBalance, setNoBalance] = useState(false);
   const callStartRef = useRef(null);
 
   const {
     status,
-    error,
     incomingCall,
     makeCall,
     hangup,
@@ -32,7 +32,9 @@ export default function Calls() {
     try {
       const { data } = await api.get("/voice/config");
       setVoiceConfig(data);
-    } catch (_e) {}
+    } catch (_e) {
+      setVoiceConfig({ enabled: false, configured: false });
+    }
   };
 
   const fetchQuote = async (target) => {
@@ -42,10 +44,9 @@ export default function Calls() {
     try {
       const { data } = await api.get(`/voice/rate-quote?to=${encodeURIComponent(trimmed)}`);
       setQuote(data);
-    } catch (err) {
+      setNoBalance(false);
+    } catch (_err) {
       setQuote(null);
-      const msg = err?.response?.data?.detail;
-      if (msg) toast.error(msg);
     }
   };
 
@@ -80,6 +81,7 @@ export default function Calls() {
 
   const updateNumber = (value) => {
     setNumber(value);
+    setNoBalance(false);
     fetchQuote(value);
   };
 
@@ -98,22 +100,19 @@ export default function Calls() {
 
     try {
       await api.get(`/voice/rate-quote?to=${encodeURIComponent(target)}`);
-    } catch (err) {
-      const msg = err?.response?.data?.detail || "You do not have airtime to call. Please add balance to make calls.";
-      toast.error(msg);
+      setNoBalance(false);
+    } catch (_err) {
+      setNoBalance(true);
       return;
     }
 
     if (status !== "ready") {
-      toast.error(status === "registering" ? "Calling is still connecting…" : `Calling is not ready yet (${status})`);
       return;
     }
 
     try {
       await makeCall(target);
-      toast.success(`Calling ${target}…`);
-    } catch (err) {
-      toast.error(err?.message || "Call failed");
+    } catch (_err) {
       await api
         .post("/voice/call-log", {
           to: target,
@@ -146,24 +145,22 @@ export default function Calls() {
       .catch(() => {});
   };
 
-  const statusLabel =
-    {
-      idle: "Initializing…",
-      registering: "Connecting…",
-      ready: "Ready to call",
-      calling: "Ringing…",
-      "in-call": "On call",
-      error: error || "Error",
-    }[status] || status;
+  const isReady = voiceConfig?.enabled && status === "ready";
+  const isOnCall = status === "calling" || status === "in-call";
 
-  const statusColor =
-    status === "ready"
-      ? "bg-[#22C55E] text-white"
-      : status === "in-call"
-      ? "bg-[#16A34A] text-white"
-      : status === "error"
-      ? "bg-red-600 text-white"
-      : "bg-white";
+  const statusColor = isOnCall
+    ? "bg-green-700 text-white"
+    : isReady
+    ? "bg-green-600 text-black"
+    : "bg-red-600 text-white";
+
+  const statusLabel = isOnCall
+    ? status === "calling"
+      ? "Ringing…"
+      : "On call"
+    : isReady
+    ? "Ready"
+    : "Not ready";
 
   const incomingNumber =
     incomingCall?.options?.remoteCallerNumber ||
@@ -172,64 +169,74 @@ export default function Calls() {
     "Unknown caller";
 
   return (
-    <div className="space-y-6" data-testid="calls-page">
+    <div className="space-y-5 md:space-y-6" data-testid="calls-page">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-3">
         <div>
-          <p className="overline text-neutral-500">VOICE · ZIMBABWE +263</p>
-          <h1 className="text-5xl md:text-6xl font-black tracking-tighter mt-2">Calls.</h1>
-          <p className="text-sm text-neutral-700 mt-2">Enter a number and call Zimbabwe mobile or landline numbers.</p>
+          <p className="text-[10px] md:text-xs font-medium tracking-widest text-green-500 uppercase">Voice · Zimbabwe +263</p>
+          <h1 className="text-3xl md:text-6xl font-medium tracking-tight mt-1.5 md:mt-2 text-black dark:text-white">Calls.</h1>
+          <p className="text-xs md:text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 md:mt-2">
+            Enter a number and call Zimbabwe mobile or landline numbers.
+          </p>
         </div>
 
-        <span className={`nb-pill ${statusColor}`} data-testid="voice-status">
-          <CheckCircle size={12} weight="bold" /> {statusLabel}
+        <span
+          className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium w-fit ${statusColor}`}
+          data-testid="voice-status"
+        >
+          {isReady || isOnCall ? <CheckCircle size={14} weight="bold" /> : <XCircle size={14} weight="bold" />}
+          {statusLabel}
         </span>
       </div>
 
-      {voiceConfig && !voiceConfig.enabled && (
-        <div className="nb-card p-4 flex items-start gap-3 bg-[#4ADE80]/40 backdrop-blur-sm" data-testid="voip-banner">
-          <Warning size={24} weight="bold" />
-          <div className="flex-1">
-            <p className="font-bold text-sm">Calling is not active yet.</p>
-            <p className="text-xs text-neutral-700 mt-1">{voiceConfig.reason}</p>
-          </div>
-        </div>
-      )}
-
       {incomingCall && (
-        <div className="nb-card p-5 flex items-center justify-between bg-[#16A34A] text-white" data-testid="incoming-call">
+        <div className="rounded-xl p-5 flex items-center justify-between bg-green-600" data-testid="incoming-call">
           <div>
-            <p className="overline">INCOMING</p>
-            <p className="text-2xl font-black mt-1">{incomingNumber}</p>
+            <p className="text-[10px] font-medium tracking-widest text-black/70 uppercase">Incoming</p>
+            <p className="text-2xl font-medium mt-1 text-black">{incomingNumber}</p>
           </div>
           <div className="flex gap-2">
-            <button onClick={acceptIncoming} className="nb-btn bg-[#4ADE80] text-black" data-testid="accept-incoming">
-              <Phone size={18} weight="fill" /> Accept
+            <button
+              onClick={acceptIncoming}
+              className="inline-flex items-center gap-1.5 rounded-full bg-black text-white px-4 py-2 text-sm font-medium"
+              data-testid="accept-incoming"
+            >
+              <Phone size={16} weight="fill" /> Accept
             </button>
-            <button onClick={rejectIncoming} className="nb-btn bg-red-600 text-white" data-testid="reject-incoming">
-              <PhoneDisconnect size={18} weight="bold" /> Reject
+            <button
+              onClick={rejectIncoming}
+              className="inline-flex items-center gap-1.5 rounded-full bg-red-600 text-white px-4 py-2 text-sm font-medium"
+              data-testid="reject-incoming"
+            >
+              <PhoneDisconnect size={16} weight="bold" /> Reject
             </button>
           </div>
         </div>
       )}
 
-      {(status === "calling" || status === "in-call") && (
-        <div className="nb-card p-5 flex items-center justify-between bg-[#16A34A] text-white" data-testid="active-call-bar">
+      {isOnCall && (
+        <div className="rounded-xl p-5 flex items-center justify-between bg-green-600" data-testid="active-call-bar">
           <div>
-            <p className="overline">{status === "calling" ? "RINGING" : "ON CALL"}</p>
-            <p className="text-2xl font-black mt-1 mono">{number}</p>
+            <p className="text-[10px] font-medium tracking-widest text-black/70 uppercase">
+              {status === "calling" ? "Ringing" : "On call"}
+            </p>
+            <p className="text-2xl font-medium mt-1 text-black">{number}</p>
           </div>
-          <button onClick={endCall} className="nb-btn bg-red-600 text-white" data-testid="hangup-button">
-            <PhoneDisconnect size={18} weight="bold" /> End
+          <button
+            onClick={endCall}
+            className="inline-flex items-center gap-1.5 rounded-full bg-red-600 text-white px-4 py-2 text-sm font-medium"
+            data-testid="hangup-button"
+          >
+            <PhoneDisconnect size={16} weight="bold" /> End
           </button>
         </div>
       )}
 
-      <div className="nb-card p-6 md:p-8 max-w-md mx-auto bg-white">
-        <label className="overline text-neutral-600">Phone number</label>
+      <div className="rounded-2xl p-6 md:p-8 max-w-md mx-auto bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+        <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">Phone number</label>
         <input
           type="tel"
           inputMode="tel"
-          className="nb-input mt-2 text-2xl md:text-3xl font-black mono"
+          className="w-full mt-2 text-2xl md:text-3xl font-medium bg-transparent border-b-2 border-neutral-300 dark:border-neutral-700 focus:border-green-600 outline-none py-2 text-black dark:text-white"
           placeholder="+263 77 000 0000"
           value={number}
           onChange={(e) => updateNumber(e.target.value)}
@@ -238,21 +245,26 @@ export default function Calls() {
 
         <button
           onClick={dial}
-          disabled={!number || status === "calling" || status === "in-call"}
-          className="nb-btn w-full mt-5 h-14 text-base text-white"
-          style={{ backgroundColor: ACCENTS.calling }}
+          disabled={!number || isOnCall}
+          className="w-full mt-5 h-14 rounded-xl text-base font-medium bg-green-600 text-black flex items-center justify-center gap-2 disabled:opacity-50 transition-opacity"
           data-testid="call-button"
         >
-          <Phone size={22} weight="fill" /> {status === "calling" ? "Ringing…" : "Call"}
+          <Phone size={20} weight="fill" /> {status === "calling" ? "Ringing…" : "Call"}
         </button>
 
-        {quote && (
-          <div className="mt-3 flex items-center justify-between text-xs px-1" data-testid="rate-quote">
-            <span className="text-neutral-600">
+        {noBalance && (
+          <p className="mt-3 text-xs text-center text-red-600 dark:text-red-400" data-testid="no-balance-message">
+            You do not have enough airtime to make this call. Please top up your wallet.
+          </p>
+        )}
+
+        {!noBalance && quote && (
+          <div className="mt-3 flex items-center justify-between text-xs px-1 text-neutral-500 dark:text-neutral-400" data-testid="rate-quote">
+            <span>
               {quote.free ? "In-app · " : `${quote.rate_name} · `}
-              <span className="mono font-bold">${quote.rate_per_minute.toFixed(2)}/min</span>
+              <span className="font-medium text-black dark:text-white">${quote.rate_per_minute.toFixed(2)}/min</span>
             </span>
-            <span className="text-neutral-600">
+            <span>
               {quote.free ? "Free" : `~${Math.floor(quote.max_minutes)} min on $${quote.balance.toFixed(2)}`}
             </span>
           </div>
@@ -261,32 +273,35 @@ export default function Calls() {
 
       <div className="space-y-3" data-testid="recent-calls">
         <div>
-          <p className="overline text-neutral-500">RECENT CALLS</p>
-          <h2 className="text-2xl font-black">Call history</h2>
+          <p className="text-[10px] md:text-xs font-medium tracking-widest text-green-500 uppercase">Recent calls</p>
+          <h2 className="text-xl md:text-2xl font-medium mt-1 text-black dark:text-white">Call history</h2>
         </div>
 
         {history.length === 0 && (
-          <div className="nb-card p-5 bg-white">
+          <div className="rounded-xl p-5 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
             <p className="text-sm text-neutral-500">No recent calls yet.</p>
           </div>
         )}
 
         {history.slice(0, 8).map((h) => (
-          <div key={h.id} className="nb-card p-4 flex items-center justify-between bg-white">
+          <div
+            key={h.id}
+            className="rounded-xl p-4 flex items-center justify-between bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
+          >
             <div>
-              <p className="font-bold">{h.to_name || h.to}</p>
-              <p className="text-xs text-neutral-500 mono">
+              <p className="font-medium text-sm text-black dark:text-white">{h.to_name || h.to}</p>
+              <p className="text-xs text-neutral-500 mt-0.5">
                 {new Date(h.created_at).toLocaleString()}
                 {h.duration_seconds ? ` · ${Math.floor(h.duration_seconds / 60)}m ${h.duration_seconds % 60}s` : ""}
               </p>
             </div>
             <span
-              className={`nb-pill ${
+              className={`rounded-full px-3 py-1 text-xs font-medium ${
                 h.status === "completed"
-                  ? "bg-[#16A34A] text-white"
+                  ? "bg-green-600 text-black"
                   : h.status === "failed" || h.status === "billing_failed"
                   ? "bg-red-600 text-white"
-                  : "bg-[#4ADE80]"
+                  : "bg-neutral-200 dark:bg-neutral-800 text-black dark:text-white"
               }`}
             >
               {h.status}
