@@ -113,4 +113,4 @@ export default function Layout({ children }) {
         </nav>
 
         <div className="mt-auto pt-4 border-t border-neutral-800">
-          <div className="flex items-center gap-3
+        <div className="flex items-center gap-3 mb-3">
