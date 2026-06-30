@@ -113,4 +113,31 @@ export default function Layout({ children }) {
         </nav>
 
         <div className="mt-auto pt-4 border-t border-neutral-800">
-        <div className="flex items-center gap-3 mb-3">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 rounded-full bg-green-600 flex items-center justify-center text-black font-medium">
+              {user?.name?.[0]?.toUpperCase() || "U"}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-medium text-sm truncate text-white" data-testid="sidebar-user-name">
+                {user?.name}
+              </p>
+              <p className="text-xs text-neutral-500 truncate">{user?.email}</p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleLogout}
+            data-testid="logout-button"
+            className="w-full flex items-center justify-center gap-2 rounded-xl border border-neutral-700 text-neutral-300 text-sm font-medium py-2.5 hover:bg-neutral-900 transition-colors"
+          >
+            <SignOut size={16} weight="bold" /> Log out
+          </button>
+        </div>
+      </aside>
+
+      <main className="pb-8 min-h-screen">
+        <div className="p-5 md:p-8 max-w-6xl mx-auto">{children}</div>
+      </main>
+    </div>
+  );
+}
