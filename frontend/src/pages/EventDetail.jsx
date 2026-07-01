@@ -55,7 +55,9 @@ export default function EventDetail() {
 
       <div className="rounded-2xl p-6 space-y-4 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
         <div className="flex items-start justify-between gap-4">
-          <h1 className="text-3xl md:text-4xl font-medium tracking-tight text-black dark:text-white">{event.title}</h1>
+          <h1 className="text-3xl md:text-4xl font-medium tracking-tight text-black dark:text-white">
+            {event.title}
+          </h1>
           <span className="rounded-full px-3 py-1.5 text-base font-medium bg-black dark:bg-white text-white dark:text-black shrink-0">
             ${event.price}
           </span>
@@ -89,9 +91,11 @@ export default function EventDetail() {
                 >
                   <Minus size={14} weight="bold" />
                 </button>
-                <span className="text-lg font-medium text-black dark:text-white w-4 text-center">{quantity}</span>
+                <span className="text-lg font-medium text-black dark:text-white w-4 text-center">
+                  {quantity}
+                </span>
                 <button
-                  onClick={() => setQuantity((q) => Math.min(remaining, Math.min(10, q + 1))}
+                  onClick={() => setQuantity((q) => Math.min(Math.min(remaining, 10), q + 1))}
                   className="w-8 h-8 rounded-full bg-neutral-100 dark:bg-neutral-700 flex items-center justify-center text-black dark:text-white"
                 >
                   <Plus size={14} weight="bold" />
