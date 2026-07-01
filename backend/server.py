@@ -1310,6 +1310,139 @@ async def admin_topup_stats(days: int = 30, _=Depends(require_admin)):
     recent = await db.payment_transactions.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
     return {"window_days": days, "summary": summary, "recent": recent}
 
+# ----- Profile / Account -----
+
+class UpdateProfileIn(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1)
+
+class RequestEmailChangeIn(BaseModel):
+    new_email: EmailStr
+
+class ConfirmEmailChangeIn(BaseModel):
+    old_email_code: str = Field(min_length=6, max_length=6)
+    new_email_code: str = Field(min_length=6, max_length=6)
+    new_email: EmailStr
+
+class DeleteAccountIn(BaseModel):
+    code: str = Field(min_length=6, max_length=6)
+
+class SupportMessageIn(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+
+
+@api.patch("/auth/profile")
+async def update_profile(data: UpdateProfileIn, current=Depends(get_current_user)):
+    update = {}
+    if data.name:
+        update["name"] = data.name.strip()
+    if not update:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    await db.users.update_one({"id": current["id"]}, {"$set": update})
+    user = await db.users.find_one({"id": current["id"]}, {"_id": 0, "password_hash": 0})
+    return user
+
+
+@api.post("/auth/email-change/request")
+async def request_email_change(data: RequestEmailChangeIn, current=Depends(get_current_user)):
+    new_email = data.new_email.lower().strip()
+
+    if new_email == current["email"]:
+        raise HTTPException(status_code=400, detail="New email is the same as current email")
+
+    existing = await db.users.find_one({"email": new_email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already in use")
+
+    old_code = generate_otp()
+    new_code = generate_otp()
+
+    await save_verification_code(
+        email=current["email"],
+        purpose="email_change_old",
+        code=old_code,
+        extra={"new_email": new_email},
+    )
+    await save_verification_code(
+        email=new_email,
+        purpose="email_change_new",
+        code=new_code,
+    )
+
+    send_email_code(current["email"], old_code, "email_change_old")
+    send_email_code(new_email, new_code, "email_change_new")
+
+    return {"ok": True, "message": "Verification codes sent to both email addresses"}
+
+
+@api.post("/auth/email-change/confirm")
+async def confirm_email_change(data: ConfirmEmailChangeIn, current=Depends(get_current_user)):
+    new_email = data.new_email.lower().strip()
+
+    await verify_code(current["email"], "email_change_old", data.old_email_code)
+    await verify_code(new_email, "email_change_new", data.new_email_code)
+
+    await db.users.update_one(
+        {"id": current["id"]},
+        {"$set": {"email": new_email, "updated_at": now_iso()}},
+    )
+    await db.verification_codes.delete_many({"email": current["email"], "purpose": "email_change_old"})
+    await db.verification_codes.delete_many({"email": new_email, "purpose": "email_change_new"})
+
+    user = await db.users.find_one({"id": current["id"]}, {"_id": 0, "password_hash": 0})
+    return user
+
+
+@api.post("/auth/delete-account/request")
+async def request_delete_account(current=Depends(get_current_user)):
+    code = generate_otp()
+    await save_verification_code(email=current["email"], purpose="delete_account", code=code)
+    send_email_code(current["email"], code, "delete_account")
+    return {"ok": True, "message": "Verification code sent to your email"}
+
+
+@api.post("/auth/delete-account/confirm")
+async def confirm_delete_account(data: DeleteAccountIn, current=Depends(get_current_user), response: Response = None):
+    await verify_code(current["email"], "delete_account", data.code)
+    await db.users.delete_one({"id": current["id"]})
+    await db.verification_codes.delete_many({"email": current["email"]})
+    if response:
+        response.delete_cookie("access_token", path="/")
+    return {"ok": True, "message": "Account deleted"}
+
+
+@api.post("/support/message")
+async def send_support_message(data: SupportMessageIn, current=Depends(get_current_user)):
+    resend_api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    from_email = os.environ.get("FROM_EMAIL", "ZimLink <info@zimlink.me>").strip()
+
+    if not resend_api_key:
+        raise HTTPException(status_code=500, detail="Support email not configured")
+
+    resend.api_key = resend_api_key
+
+    html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto">
+      <h2>New Support Message</h2>
+      <p><strong>From:</strong> {current['name']} ({current['email']})</p>
+      <p><strong>User ID:</strong> {current['id']}</p>
+      <hr/>
+      <p>{data.message.replace(chr(10), '<br/>')}</p>
+    </div>
+    """
+
+    try:
+        resend.Emails.send({
+            "from": from_email,
+            "to": ["info@zimlink.me"],
+            "reply_to": current["email"],
+            "subject": f"Support: {current['name']} — {data.message[:60]}...",
+            "html": html,
+        })
+        logger.info(f"Support message from {current['email']}")
+        return {"ok": True, "message": "Message sent"}
+    except Exception as e:
+        logger.error(f"Support email failed: {e}")
+        raise HTTPException(status_code=500, detail="Could not send message")
 
 # ----- CORS & App startup -----
 app.add_middleware(
