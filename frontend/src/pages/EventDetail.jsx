@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import api from "@/lib/api";
-import { ArrowLeft, CalendarStar, MapPin, Ticket } from "@phosphor-icons/react";
+import { ArrowLeft, CalendarStar, MapPin, Ticket, Minus, Plus } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 export default function EventDetail() {
@@ -9,6 +9,7 @@ export default function EventDetail() {
   const navigate = useNavigate();
   const [event, setEvent] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [quantity, setQuantity] = useState(1);
 
   useEffect(() => {
     api.get(`/events/${id}`).then(({ data }) => setEvent(data)).catch(() => {
@@ -20,14 +21,16 @@ export default function EventDetail() {
   if (!event) return <div className="p-6 text-sm text-neutral-500">Loading…</div>;
 
   const remaining = Number(event.total_tickets || 0) - Number(event.tickets_sold || 0);
+  const totalCost = (event.price * quantity).toFixed(2);
 
   const buyTicket = async () => {
     setBusy(true);
     try {
-      await api.post(`/events/${id}/buy-ticket`);
-      toast.success("Ticket purchased!");
+      await api.post(`/events/${id}/buy-ticket`, { quantity });
+      toast.success(`${quantity} ticket${quantity > 1 ? "s" : ""} purchased! Check your email.`);
       const { data } = await api.get(`/events/${id}`);
       setEvent(data);
+      setQuantity(1);
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Purchase failed");
     } finally {
@@ -75,15 +78,52 @@ export default function EventDetail() {
 
         <p className="text-sm text-neutral-500 leading-relaxed">{event.description}</p>
 
+        {remaining > 0 && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between rounded-xl bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 p-3">
+              <span className="text-sm font-medium text-black dark:text-white">Number of tickets</span>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                  className="w-8 h-8 rounded-full bg-neutral-100 dark:bg-neutral-700 flex items-center justify-center text-black dark:text-white"
+                >
+                  <Minus size={14} weight="bold" />
+                </button>
+                <span className="text-lg font-medium text-black dark:text-white w-4 text-center">{quantity}</span>
+                <button
+                  onClick={() => setQuantity((q) => Math.min(remaining, Math.min(10, q + 1))}
+                  className="w-8 h-8 rounded-full bg-neutral-100 dark:bg-neutral-700 flex items-center justify-center text-black dark:text-white"
+                >
+                  <Plus size={14} weight="bold" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between px-1">
+              <span className="text-sm text-neutral-500">Total</span>
+              <span className="text-lg font-medium text-black dark:text-white">${totalCost}</span>
+            </div>
+
+            <p className="text-xs text-neutral-500 text-center">
+              Tickets will be sent to your email after purchase
+            </p>
+          </div>
+        )}
+
         <button
           onClick={buyTicket}
           disabled={busy || remaining === 0}
-          className="w-full h-12 rounded-xl font-medium text-black disabled:opacity-50"
-          style={{ backgroundColor: remaining === 0 ? undefined : "#16A34A" }}
+          className={`w-full h-12 rounded-xl font-medium disabled:opacity-50 ${
+            remaining === 0
+              ? "bg-neutral-200 dark:bg-neutral-800 text-neutral-500"
+              : "bg-green-600 text-black"
+          }`}
         >
-          <span className={remaining === 0 ? "text-neutral-500" : ""}>
-            {remaining === 0 ? "Sold out" : busy ? "Processing…" : "Buy ticket"}
-          </span>
+          {remaining === 0
+            ? "Sold out"
+            : busy
+            ? "Processing…"
+            : `Buy ${quantity} ticket${quantity > 1 ? "s" : ""} · $${totalCost}`}
         </button>
       </div>
     </div>

@@ -23,6 +23,9 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 import stripe
+import qrcode
+import io
+import base64
 
 # ----- Setup -----
 mongo_url = os.environ['MONGO_URL']
@@ -206,6 +209,7 @@ class RegisterCodeRequestIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
     name: str = Field(min_length=1)
+    phone: Optional[str] = ""
 
 class VerifyRegisterCodeIn(BaseModel):
     email: EmailStr
@@ -290,21 +294,24 @@ async def verify_register_code(data: VerifyRegisterCodeIn, response: Response):
         raise HTTPException(status_code=400, detail="Email already registered")
 
     record = await verify_code(email, "register", data.code)
-    extra = record.get("extra", {})
-
-    user_id = new_id()
-    user = {
-        "id": user_id,
-        "email": email,
-        "name": extra.get("name", "User"),
-        "password_hash": extra.get("password_hash"),
-        "avatar_url": "",
-        "wallet_balance": 0.0,
-        "phone": "",
-        "is_admin": False,
-        "email_verified": True,
-        "created_at": now_iso(),
+    extra={
+        "name": data.name.strip(),
+        "password_hash": hash_password(data.password),
+        "phone": data.phone or "",
     }
+
+user = {
+    "id": user_id,
+    "email": email,
+    "name": extra.get("name", "User"),
+    "password_hash": extra.get("password_hash"),
+    "phone": extra.get("phone", ""),
+    "avatar_url": "",
+    "wallet_balance": 0.0,
+    "is_admin": False,
+    "email_verified": True,
+    "created_at": now_iso(),
+}
 
     if not user["password_hash"]:
         raise HTTPException(status_code=400, detail="Registration session expired. Request a new code")
@@ -832,40 +839,140 @@ async def get_event(event_id: str):
     return event
 
 
+class BuyTicketIn(BaseModel):
+    quantity: int = Field(ge=1, le=10, default=1)
+
+
+def generate_qr_base64(data: str) -> str:
+    qr = qrcode.QRCode(version=1, box_size=6, border=2)
+    qr.add_data(data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
+def send_ticket_emails(tickets: list, event: dict, buyer: dict):
+    resend_api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    from_email = os.environ.get("FROM_EMAIL", "ZimLink <info@zimlink.me>").strip()
+
+    if not resend_api_key:
+        logger.warning("RESEND_API_KEY missing — ticket emails not sent")
+        return
+
+    resend.api_key = resend_api_key
+
+    for ticket in tickets:
+        qr_b64 = generate_qr_base64(f"ZIMLINK-TICKET:{ticket['id']}")
+
+        html = f"""
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;background:#f9f9f9;border-radius:16px;overflow:hidden;border:1px solid #e5e5e5">
+          <div style="background:#16A34A;padding:28px;text-align:center">
+            <h1 style="color:#000;margin:0;font-size:26px;font-weight:600">ZimLink</h1>
+            <p style="color:rgba(0,0,0,0.65);margin:6px 0 0;font-size:13px">Your ticket is confirmed</p>
+          </div>
+          <div style="padding:28px">
+            <h2 style="font-size:22px;margin:0 0 4px;color:#111;font-weight:600">{event['title']}</h2>
+            <p style="color:#666;font-size:13px;margin:0 0 24px">{event['city']} · {event['venue']}</p>
+            <table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:24px">
+              <tr style="border-bottom:1px solid #eee">
+                <td style="padding:10px 0;color:#999;width:40%">Date & time</td>
+                <td style="color:#111;font-weight:500">{event['date_time']}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #eee">
+                <td style="padding:10px 0;color:#999">Venue</td>
+                <td style="color:#111;font-weight:500">{event['venue']}, {event['city']}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #eee">
+                <td style="padding:10px 0;color:#999">Ticket</td>
+                <td style="color:#111;font-weight:500">{ticket['ticket_number']} of {ticket['total_in_order']}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #eee">
+                <td style="padding:10px 0;color:#999">Price</td>
+                <td style="color:#111;font-weight:500">${ticket['price']:.2f}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #eee">
+                <td style="padding:10px 0;color:#999">Name</td>
+                <td style="color:#111;font-weight:500">{buyer['name']}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 0;color:#999">Ticket ID</td>
+                <td style="color:#111;font-family:monospace;font-size:11px">{ticket['id']}</td>
+              </tr>
+            </table>
+            <div style="text-align:center;background:#fff;border-radius:12px;padding:20px;border:1px solid #eee;margin-bottom:20px">
+              <img src="data:image/png;base64,{qr_b64}" alt="QR Code" style="width:160px;height:160px" />
+              <p style="color:#999;font-size:11px;margin:10px 0 0">Scan at the door to verify your ticket</p>
+            </div>
+            <p style="color:#bbb;font-size:11px;text-align:center;margin:0">
+              This ticket is non-transferable. Present at entry. Powered by ZimLink.
+            </p>
+          </div>
+        </div>
+        """
+
+        resend.Emails.send({
+            "from": from_email,
+            "to": [buyer["email"]],
+            "subject": f"🎟 Your ticket for {event['title']} — {ticket['ticket_number']} of {ticket['total_in_order']}",
+            "html": html,
+        })
+
+        logger.info(f"Ticket {ticket['id']} emailed to {buyer['email']}")
+
+
 @api.post("/events/{event_id}/buy-ticket")
-async def buy_ticket(event_id: str, current=Depends(get_current_user)):
+async def buy_ticket(event_id: str, data: BuyTicketIn = BuyTicketIn(), current=Depends(get_current_user)):
     event = await db.events.find_one({"id": event_id}, {"_id": 0})
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    if int(event.get("tickets_sold", 0)) >= int(event.get("total_tickets", 0)):
+    remaining = int(event.get("total_tickets", 0)) - int(event.get("tickets_sold", 0))
+    if remaining <= 0:
         raise HTTPException(status_code=400, detail="Event is sold out")
+    if data.quantity > remaining:
+        raise HTTPException(status_code=400, detail=f"Only {remaining} tickets left")
 
     price = float(event.get("price", 0))
-    user = await db.users.find_one({"id": current["id"]}, {"_id": 0, "wallet_balance": 1})
+    total_cost = price * data.quantity
 
-    if price > 0 and float(user.get("wallet_balance", 0)) < price:
+    user = await db.users.find_one({"id": current["id"]}, {"_id": 0, "wallet_balance": 1})
+    if total_cost > 0 and float(user.get("wallet_balance", 0)) < total_cost:
         raise HTTPException(status_code=400, detail="Insufficient wallet balance")
 
-    if price > 0:
-        await db.users.update_one({"id": current["id"]}, {"$inc": {"wallet_balance": -price}})
+    if total_cost > 0:
+        await db.users.update_one({"id": current["id"]}, {"$inc": {"wallet_balance": -total_cost}})
 
-    await db.events.update_one({"id": event_id}, {"$inc": {"tickets_sold": 1}})
+    await db.events.update_one({"id": event_id}, {"$inc": {"tickets_sold": data.quantity}})
 
-    ticket = {
-        "id": new_id(),
-        "event_id": event_id,
-        "event_title": event["title"],
-        "buyer_id": current["id"],
-        "buyer_name": current["name"],
-        "buyer_email": current["email"],
-        "price": price,
-        "created_at": now_iso(),
-    }
+    tickets = []
+    for i in range(data.quantity):
+        ticket = {
+            "id": new_id(),
+            "event_id": event_id,
+            "event_title": event["title"],
+            "event_date": event["date_time"],
+            "event_venue": event["venue"],
+            "event_city": event["city"],
+            "buyer_id": current["id"],
+            "buyer_name": current["name"],
+            "buyer_email": current["email"],
+            "price": price,
+            "ticket_number": i + 1,
+            "total_in_order": data.quantity,
+            "created_at": now_iso(),
+        }
+        await db.event_tickets.insert_one(ticket)
+        ticket.pop("_id", None)
+        tickets.append(ticket)
 
-    await db.event_tickets.insert_one(ticket)
-    ticket.pop("_id", None)
-    return ticket
+    try:
+        send_ticket_emails(tickets, event, current)
+    except Exception as e:
+        logger.error(f"Failed to send ticket emails: {e}")
+
+    return {"tickets": tickets, "total_cost": total_cost}
 
 # ----- VoIP / Telnyx -----
 def get_voice_status():

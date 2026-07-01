@@ -13,20 +13,15 @@ export default function Register() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
 
   const requestCode = async (e) => {
     e.preventDefault();
     setBusy(true);
-
     try {
-      await api.post("/auth/register/request-code", {
-        name,
-        email,
-        password,
-      });
-
+      await api.post("/auth/register/request-code", { name, email, password, phone });
       toast.success("Verification code sent to your email");
       setStep("code");
     } catch (err) {
@@ -40,13 +35,8 @@ export default function Register() {
   const verifyCode = async (e) => {
     e.preventDefault();
     setBusy(true);
-
     try {
-      const { data } = await api.post("/auth/register/verify", {
-        email,
-        code,
-      });
-
+      const { data } = await api.post("/auth/register/verify", { email, code });
       localStorage.setItem("token", data.token);
       await refresh();
       toast.success("Account verified and created!");
@@ -61,14 +51,8 @@ export default function Register() {
 
   const resendCode = async () => {
     setBusy(true);
-
     try {
-      await api.post("/auth/register/request-code", {
-        name,
-        email,
-        password,
-      });
-
+      await api.post("/auth/register/request-code", { name, email, password, phone });
       toast.success("New code sent");
     } catch (err) {
       const msg = err?.response?.data?.detail || "Could not resend code";
@@ -79,7 +63,7 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-5 relative bg-white dark:bg-black transition-colors">
+    <div className="min-h-screen flex items-center justify-center p-5 bg-white dark:bg-black transition-colors">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center flex flex-col items-center">
           <img src={logo} alt="ZimLink" className="w-64 md:w-80 mx-auto object-contain -mb-10" />
@@ -120,6 +104,20 @@ export default function Register() {
             </div>
 
             <div>
+              <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">
+                Phone number
+              </label>
+              <input
+                type="tel"
+                className="w-full mt-2 h-11 rounded-lg px-3 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 outline-none focus:border-green-600 text-black dark:text-white"
+                placeholder="+263 77 000 0000"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                data-testid="register-phone-input"
+              />
+            </div>
+
+            <div>
               <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">Password</label>
               <input
                 type="password"
@@ -156,7 +154,8 @@ export default function Register() {
           >
             <h2 className="text-2xl font-medium text-black dark:text-white">Verify email.</h2>
             <p className="text-sm text-neutral-500">
-              Enter the 6-digit code sent to <span className="font-medium text-black dark:text-white">{email}</span>.
+              Enter the 6-digit code sent to{" "}
+              <span className="font-medium text-black dark:text-white">{email}</span>.
             </p>
 
             <div>
