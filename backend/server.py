@@ -262,12 +262,18 @@ def send_ticket_emails(tickets: list, event: dict, buyer: dict):
         </div>
         """
 
-        resend.Emails.send({
-            "from": from_email,
-            "to": [buyer["email"]],
-            "subject": f"Your ticket for {event['title']} — {ticket['ticket_number']} of {ticket['total_in_order']}",
-            "html": html,
-        })
+        try:
+            resend.Emails.send({
+                "from": from_email,
+                "to": [buyer["email"]],
+                "subject": f"Your ticket for {event['title']}",
+                "html": html,
+            })
+
+            logger.info(f"Ticket email sent to {buyer['email']}")
+
+        except Exception as e:
+            logger.exception("Ticket email failed")
 
         logger.info(f"Ticket {ticket['id']} emailed to {buyer['email']}")
 
