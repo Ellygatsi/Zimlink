@@ -27,10 +27,9 @@ export default function EventDetail() {
     setBusy(true);
     try {
       await api.post(`/events/${id}/buy-ticket`, { quantity });
-      toast.success(`${quantity} ticket${quantity > 1 ? "s" : ""} purchased! Check your email.`);
-      const { data } = await api.get(`/events/${id}`);
-      setEvent(data);
-      setQuantity(1);
+      navigate("/tickets/success", {
+        state: { quantity, eventTitle: event.title },
+      });
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Purchase failed");
     } finally {

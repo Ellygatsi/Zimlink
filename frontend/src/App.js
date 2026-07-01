@@ -20,6 +20,12 @@ import AdminSettings from "@/pages/AdminSettings";
 import AdminUsers from "@/pages/AdminUsers";
 import AdminGuard from "@/components/AdminGuard";
 import "@/App.css";
+import TicketSuccess from "@/pages/TicketSuccess";
+import Profile from "@/pages/Profile";
+
+// add inside your routes:
+<Route path="/tickets/success" element={<Protected><TicketSuccess /></Protected>} />
+<Route path="/profile" element={<Protected><Profile /></Protected>} />
 
 function Protected({ children }) {
   return (

@@ -64,10 +64,12 @@ export default function Layout({ children }) {
 
         <img src={logo} alt="ZimLink" className="h-7 md:h-10 max-w-[110px] md:max-w-[150px] object-contain" />
 
-        <div className="w-7 h-7 md:w-10 md:h-10 rounded-full bg-green-600 flex items-center justify-center text-black font-medium text-xs md:text-sm">
+        <button
+          onClick={() => navigate("/profile")}
+          className="w-7 h-7 md:w-10 md:h-10 rounded-full bg-green-600 flex items-center justify-center text-black font-medium text-xs md:text-sm"
+        >
           {user?.name?.[0]?.toUpperCase() || "U"}
-        </div>
-      </header>
+        </button>>
 
       {/* Overlay */}
       {sidebarOpen && (
