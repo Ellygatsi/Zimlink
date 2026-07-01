@@ -13,4 +13,4 @@ stripe==14.4.1
 uvicorn==0.25.0
 resend
 qrcode[pil]==7.4.2
-Pillow==10.3.0
+Pillow==11.2.1
