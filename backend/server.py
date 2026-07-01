@@ -15,7 +15,9 @@ import smtplib
 from email.message import EmailMessage
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Literal
-import resend
+import qrcode
+import io
+import base64
 from email_templates import zimlink_email_template
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, status
@@ -23,9 +25,6 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 import stripe
-import qrcode
-import io
-import base64
 
 # ----- Setup -----
 mongo_url = os.environ['MONGO_URL']
@@ -168,7 +167,6 @@ def send_email_code(to_email: str, code: str, purpose: str) -> None:
             "subject": subject,
             "html": html,
         })
-
         logger.info(f"Sent {purpose} code to {to_email} from {from_email}")
     except Exception as exc:
         logger.error(f"Could not send Resend email to {to_email}: {exc}")
@@ -193,6 +191,85 @@ async def get_rate_for_number(to_number: str) -> dict:
         return best
     default = next((r for r in rates if r.get("prefix") == "default"), None)
     return default or {"rate_per_minute": 0.30, "name": "Default", "prefix": "default"}
+
+
+def generate_qr_base64(data: str) -> str:
+    qr = qrcode.QRCode(version=1, box_size=6, border=2)
+    qr.add_data(data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
+def send_ticket_emails(tickets: list, event: dict, buyer: dict):
+    resend_api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    from_email = os.environ.get("FROM_EMAIL", "ZimLink <info@zimlink.me>").strip()
+
+    if not resend_api_key:
+        logger.warning("RESEND_API_KEY missing — ticket emails not sent")
+        return
+
+    resend.api_key = resend_api_key
+
+    for ticket in tickets:
+        qr_b64 = generate_qr_base64(f"ZIMLINK-TICKET:{ticket['id']}")
+
+        html = f"""
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;background:#f9f9f9;border-radius:16px;overflow:hidden;border:1px solid #e5e5e5">
+          <div style="background:#16A34A;padding:28px;text-align:center">
+            <h1 style="color:#000;margin:0;font-size:26px;font-weight:600">ZimLink</h1>
+            <p style="color:rgba(0,0,0,0.65);margin:6px 0 0;font-size:13px">Your ticket is confirmed</p>
+          </div>
+          <div style="padding:28px">
+            <h2 style="font-size:22px;margin:0 0 4px;color:#111;font-weight:600">{event['title']}</h2>
+            <p style="color:#666;font-size:13px;margin:0 0 24px">{event['city']} · {event['venue']}</p>
+            <table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:24px">
+              <tr style="border-bottom:1px solid #eee">
+                <td style="padding:10px 0;color:#999;width:40%">Date & time</td>
+                <td style="color:#111;font-weight:500">{event['date_time']}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #eee">
+                <td style="padding:10px 0;color:#999">Venue</td>
+                <td style="color:#111;font-weight:500">{event['venue']}, {event['city']}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #eee">
+                <td style="padding:10px 0;color:#999">Ticket</td>
+                <td style="color:#111;font-weight:500">{ticket['ticket_number']} of {ticket['total_in_order']}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #eee">
+                <td style="padding:10px 0;color:#999">Price</td>
+                <td style="color:#111;font-weight:500">${ticket['price']:.2f}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #eee">
+                <td style="padding:10px 0;color:#999">Name</td>
+                <td style="color:#111;font-weight:500">{buyer['name']}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 0;color:#999">Ticket ID</td>
+                <td style="color:#111;font-family:monospace;font-size:11px">{ticket['id']}</td>
+              </tr>
+            </table>
+            <div style="text-align:center;background:#fff;border-radius:12px;padding:20px;border:1px solid #eee;margin-bottom:20px">
+              <img src="data:image/png;base64,{qr_b64}" alt="QR Code" style="width:160px;height:160px" />
+              <p style="color:#999;font-size:11px;margin:10px 0 0">Scan at the door to verify your ticket</p>
+            </div>
+            <p style="color:#bbb;font-size:11px;text-align:center;margin:0">
+              This ticket is non-transferable. Present at entry. Powered by ZimLink.
+            </p>
+          </div>
+        </div>
+        """
+
+        resend.Emails.send({
+            "from": from_email,
+            "to": [buyer["email"]],
+            "subject": f"Your ticket for {event['title']} — {ticket['ticket_number']} of {ticket['total_in_order']}",
+            "html": html,
+        })
+
+        logger.info(f"Ticket {ticket['id']} emailed to {buyer['email']}")
 
 
 # ----- Models -----
@@ -261,6 +338,19 @@ class UpdateRateIn(BaseModel):
     rate_per_minute: Optional[float] = Field(default=None, ge=0)
     cost_per_minute: Optional[float] = Field(default=None, ge=0)
 
+class EventIn(BaseModel):
+    title: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    date_time: str = Field(min_length=1)
+    venue: str = Field(min_length=1)
+    city: str = Field(min_length=1)
+    price: float = Field(ge=0)
+    total_tickets: int = Field(ge=1)
+    image_url: Optional[str] = ""
+
+class BuyTicketIn(BaseModel):
+    quantity: int = Field(ge=1, le=10, default=1)
+
 
 # ----- Auth Endpoints -----
 @api.post("/auth/register/request-code")
@@ -278,6 +368,7 @@ async def request_register_code(data: RegisterCodeRequestIn):
         extra={
             "name": data.name.strip(),
             "password_hash": hash_password(data.password),
+            "phone": data.phone or "",
         },
     )
     send_email_code(email, code, "register")
@@ -294,24 +385,21 @@ async def verify_register_code(data: VerifyRegisterCodeIn, response: Response):
         raise HTTPException(status_code=400, detail="Email already registered")
 
     record = await verify_code(email, "register", data.code)
-    extra={
-        "name": data.name.strip(),
-        "password_hash": hash_password(data.password),
-        "phone": data.phone or "",
-    }
+    extra = record.get("extra", {})
 
-user = {
-    "id": user_id,
-    "email": email,
-    "name": extra.get("name", "User"),
-    "password_hash": extra.get("password_hash"),
-    "phone": extra.get("phone", ""),
-    "avatar_url": "",
-    "wallet_balance": 0.0,
-    "is_admin": False,
-    "email_verified": True,
-    "created_at": now_iso(),
-}
+    user_id = new_id()
+    user = {
+        "id": user_id,
+        "email": email,
+        "name": extra.get("name", "User"),
+        "password_hash": extra.get("password_hash"),
+        "phone": extra.get("phone", ""),
+        "avatar_url": "",
+        "wallet_balance": 0.0,
+        "is_admin": False,
+        "email_verified": True,
+        "created_at": now_iso(),
+    }
 
     if not user["password_hash"]:
         raise HTTPException(status_code=400, detail="Registration session expired. Request a new code")
@@ -327,7 +415,6 @@ user = {
     return {"token": token, "user": user}
 
 
-# Keeps old endpoint available, but now requires email code flow through the frontend.
 @api.post("/auth/register")
 async def register(data: RegisterIn):
     raise HTTPException(status_code=400, detail="Email verification required. Please request a 6-digit code first")
@@ -354,7 +441,6 @@ async def request_password_reset_code(data: PasswordResetRequestIn):
     email = data.email.lower().strip()
     user = await db.users.find_one({"email": email}, {"_id": 0, "id": 1})
 
-    # For privacy, return OK even if the email is not registered.
     if user:
         code = generate_otp()
         await save_verification_code(email=email, purpose="password_reset", code=code)
@@ -791,17 +877,9 @@ async def post_channel_message(channel_id: str, data: MessageIn, current=Depends
     await db.channel_messages.insert_one(m)
     m.pop("_id", None)
     return m
-class EventIn(BaseModel):
-    title: str = Field(min_length=1)
-    description: str = Field(min_length=1)
-    date_time: str = Field(min_length=1)
-    venue: str = Field(min_length=1)
-    city: str = Field(min_length=1)
-    price: float = Field(ge=0)
-    total_tickets: int = Field(ge=1)
-    image_url: Optional[str] = ""
 
 
+# ----- Events -----
 @api.post("/events")
 async def create_event(data: EventIn, current=Depends(get_current_user)):
     event = {
@@ -837,89 +915,6 @@ async def get_event(event_id: str):
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     return event
-
-
-class BuyTicketIn(BaseModel):
-    quantity: int = Field(ge=1, le=10, default=1)
-
-
-def generate_qr_base64(data: str) -> str:
-    qr = qrcode.QRCode(version=1, box_size=6, border=2)
-    qr.add_data(data)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
-    return base64.b64encode(buffer.getvalue()).decode()
-
-
-def send_ticket_emails(tickets: list, event: dict, buyer: dict):
-    resend_api_key = os.environ.get("RESEND_API_KEY", "").strip()
-    from_email = os.environ.get("FROM_EMAIL", "ZimLink <info@zimlink.me>").strip()
-
-    if not resend_api_key:
-        logger.warning("RESEND_API_KEY missing — ticket emails not sent")
-        return
-
-    resend.api_key = resend_api_key
-
-    for ticket in tickets:
-        qr_b64 = generate_qr_base64(f"ZIMLINK-TICKET:{ticket['id']}")
-
-        html = f"""
-        <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;background:#f9f9f9;border-radius:16px;overflow:hidden;border:1px solid #e5e5e5">
-          <div style="background:#16A34A;padding:28px;text-align:center">
-            <h1 style="color:#000;margin:0;font-size:26px;font-weight:600">ZimLink</h1>
-            <p style="color:rgba(0,0,0,0.65);margin:6px 0 0;font-size:13px">Your ticket is confirmed</p>
-          </div>
-          <div style="padding:28px">
-            <h2 style="font-size:22px;margin:0 0 4px;color:#111;font-weight:600">{event['title']}</h2>
-            <p style="color:#666;font-size:13px;margin:0 0 24px">{event['city']} · {event['venue']}</p>
-            <table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:24px">
-              <tr style="border-bottom:1px solid #eee">
-                <td style="padding:10px 0;color:#999;width:40%">Date & time</td>
-                <td style="color:#111;font-weight:500">{event['date_time']}</td>
-              </tr>
-              <tr style="border-bottom:1px solid #eee">
-                <td style="padding:10px 0;color:#999">Venue</td>
-                <td style="color:#111;font-weight:500">{event['venue']}, {event['city']}</td>
-              </tr>
-              <tr style="border-bottom:1px solid #eee">
-                <td style="padding:10px 0;color:#999">Ticket</td>
-                <td style="color:#111;font-weight:500">{ticket['ticket_number']} of {ticket['total_in_order']}</td>
-              </tr>
-              <tr style="border-bottom:1px solid #eee">
-                <td style="padding:10px 0;color:#999">Price</td>
-                <td style="color:#111;font-weight:500">${ticket['price']:.2f}</td>
-              </tr>
-              <tr style="border-bottom:1px solid #eee">
-                <td style="padding:10px 0;color:#999">Name</td>
-                <td style="color:#111;font-weight:500">{buyer['name']}</td>
-              </tr>
-              <tr>
-                <td style="padding:10px 0;color:#999">Ticket ID</td>
-                <td style="color:#111;font-family:monospace;font-size:11px">{ticket['id']}</td>
-              </tr>
-            </table>
-            <div style="text-align:center;background:#fff;border-radius:12px;padding:20px;border:1px solid #eee;margin-bottom:20px">
-              <img src="data:image/png;base64,{qr_b64}" alt="QR Code" style="width:160px;height:160px" />
-              <p style="color:#999;font-size:11px;margin:10px 0 0">Scan at the door to verify your ticket</p>
-            </div>
-            <p style="color:#bbb;font-size:11px;text-align:center;margin:0">
-              This ticket is non-transferable. Present at entry. Powered by ZimLink.
-            </p>
-          </div>
-        </div>
-        """
-
-        resend.Emails.send({
-            "from": from_email,
-            "to": [buyer["email"]],
-            "subject": f"🎟 Your ticket for {event['title']} — {ticket['ticket_number']} of {ticket['total_in_order']}",
-            "html": html,
-        })
-
-        logger.info(f"Ticket {ticket['id']} emailed to {buyer['email']}")
 
 
 @api.post("/events/{event_id}/buy-ticket")
@@ -974,12 +969,10 @@ async def buy_ticket(event_id: str, data: BuyTicketIn = BuyTicketIn(), current=D
 
     return {"tickets": tickets, "total_cost": total_cost}
 
+
 # ----- VoIP / Telnyx -----
 def get_voice_status():
     enabled = os.environ.get("TELNYX_VOICE_ENABLED", "false").lower() == "true"
-
-    # For Telnyx WebRTC testing, the actual call is made from the frontend
-    # using the Telnyx WebRTC SDK. Backend keeps wallet/rate/history logic.
     provider = os.environ.get("VOICE_PROVIDER", "telnyx")
 
     if not enabled:
@@ -1004,24 +997,17 @@ async def voice_config(current=Depends(get_current_user)):
         {"id": current["id"]},
         {"_id": 0, "wallet_balance": 1}
     )
-
     balance = float(user.get("wallet_balance", 0.0)) if user else 0.0
-
-    return {
-        **get_voice_status(),
-        "balance": balance
-    }
+    return {**get_voice_status(), "balance": balance}
 
 
 @api.get("/voice/rate-quote")
 async def voice_rate_quote(to: str, current=Depends(get_current_user)):
     rate = await get_rate_for_number(to)
-
     user = await db.users.find_one(
         {"id": current["id"]},
         {"_id": 0, "wallet_balance": 1}
     )
-
     balance = float(user.get("wallet_balance", 0.0)) if user else 0.0
 
     if balance <= 0:
@@ -1052,13 +1038,10 @@ async def log_call(payload: dict, current=Depends(get_current_user)):
     direction = payload.get("direction", "outbound")
 
     rate = await get_rate_for_number(to)
-
     rpm = float(rate.get("rate_per_minute", 0.0))
     cpm = float(rate.get("cost_per_minute", 0.0))
-
     charge = round(rpm * (duration / 60.0), 4) if direction == "outbound" else 0.0
     cost = round(cpm * (duration / 60.0), 4) if direction == "outbound" else 0.0
-
     billed = False
 
     if charge > 0:
@@ -1066,9 +1049,7 @@ async def log_call(payload: dict, current=Depends(get_current_user)):
             {"id": current["id"], "wallet_balance": {"$gte": charge}},
             {"$inc": {"wallet_balance": -charge}},
         )
-
         billed = result.modified_count == 1
-
         if not billed:
             status_val = "billing_failed"
 
@@ -1095,7 +1076,6 @@ async def log_call(payload: dict, current=Depends(get_current_user)):
 
     await db.calls.insert_one(entry)
     entry.pop("_id", None)
-
     return entry
 
 
@@ -1105,7 +1085,6 @@ async def call_history(current=Depends(get_current_user)):
         {"user_id": current["id"]},
         {"_id": 0}
     ).sort("created_at", -1).to_list(100)
-
     return items
 
 
@@ -1286,7 +1265,6 @@ async def admin_credit_user_by_email(data: AdminCreditByEmailIn, _=Depends(requi
     return {"ok": True, "user": user}
 
 
-# ----- Admin: app settings -----
 class SettingsIn(BaseModel):
     deposit_fee_percent: Optional[float] = Field(default=None, ge=0, le=100)
     min_topup: Optional[float] = Field(default=None, ge=1)
