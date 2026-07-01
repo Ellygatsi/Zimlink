@@ -23,10 +23,6 @@ import "@/App.css";
 import TicketSuccess from "@/pages/TicketSuccess";
 import Profile from "@/pages/Profile";
 
-// add inside your routes:
-<Route path="/tickets/success" element={<Protected><TicketSuccess /></Protected>} />
-<Route path="/profile" element={<Protected><Profile /></Protected>} />
-
 function Protected({ children }) {
   return (
     <ProtectedRoute>
@@ -82,6 +78,8 @@ function App() {
             <Route path="/admin/users" element={<AdminProtected><AdminUsers /></AdminProtected>} />
             <Route path="/admin/rates" element={<AdminProtected><AdminRates /></AdminProtected>} />
             <Route path="/admin/settings" element={<AdminProtected><AdminSettings /></AdminProtected>} />
+            <Route path="/tickets/success" element={<Protected><TicketSuccess /></Protected>} />
+            <Route path="/profile" element={<Protected><Profile /></Protected>} />
 
             <Route path="*" element={<Navigate to="/home" replace />} />
           </Routes>
