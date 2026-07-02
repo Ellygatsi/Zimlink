@@ -26,6 +26,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 import stripe
 
+
 # ----- Setup -----
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -1085,13 +1086,28 @@ async def log_call(payload: dict, current=Depends(get_current_user)):
     return entry
 
 
-@api.get("/voice/call-history")
-async def call_history(current=Depends(get_current_user)):
-    items = await db.calls.find(
-        {"user_id": current["id"]},
-        {"_id": 0}
-    ).sort("created_at", -1).to_list(100)
-    return items
+@api.post("/telnyx/texml")
+async def telnyx_texml_webhook(request: Request):
+    """
+    Telnyx calls this whenever a call event happens on the SIP Connection /
+    TeXML Application tied to Zimlink. It expects TeXML (XML) back telling
+    it what to do with the call.
+    """
+    form = await request.form()
+    call_direction = form.get("Direction")
+    to_number = form.get("To")
+    from_number = form.get("From")
+
+    logger.info(f"[Telnyx] direction={call_direction} to={to_number} from={from_number}")
+
+    texml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Dial callerId="{from_number}">
+        <Number>{to_number}</Number>
+    </Dial>
+</Response>"""
+
+    return Response(content=texml, media_type="application/xml")
 
 
 # ----- Stats -----
