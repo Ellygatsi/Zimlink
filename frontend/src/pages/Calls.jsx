@@ -4,13 +4,21 @@ import { Phone, PhoneDisconnect, CheckCircle, XCircle } from "@phosphor-icons/re
 import { toast } from "sonner";
 import { useTelnyxDevice } from "@/hooks/useTelnyxDevice";
 
+function formatDuration(totalSeconds) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 export default function Calls() {
   const [number, setNumber] = useState("+263");
   const [history, setHistory] = useState([]);
   const [quote, setQuote] = useState(null);
   const [voiceConfig, setVoiceConfig] = useState(null);
   const [noBalance, setNoBalance] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const callStartRef = useRef(null);
+  const timerRef = useRef(null);
 
   const {
     status,
@@ -56,15 +64,46 @@ export default function Calls() {
     fetchQuote("+263");
   }, []);
 
+  // Start/stop the live running timer based on call status.
+  // Timer starts only once the call is actually "in-call" (accepted/connected),
+  // not while it's still "calling" (ringing).
   useEffect(() => {
-    if (status === "in-call" && !callStartRef.current) {
-      callStartRef.current = Date.now();
+    if (status === "in-call") {
+      if (!callStartRef.current) {
+        callStartRef.current = Date.now();
+      }
+
+      if (!timerRef.current) {
+        timerRef.current = setInterval(() => {
+          if (callStartRef.current) {
+            setElapsedSeconds(Math.floor((Date.now() - callStartRef.current) / 1000));
+          }
+        }, 1000);
+      }
+    } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      if (status !== "in-call") {
+        setElapsedSeconds(0);
+      }
     }
 
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [status]);
+
+  useEffect(() => {
     if (status === "ready" && callStartRef.current) {
       const duration = Math.floor((Date.now() - callStartRef.current) / 1000);
       const captured = number;
       callStartRef.current = null;
+      setElapsedSeconds(0);
 
       api
         .post("/voice/call-log", {
@@ -132,6 +171,7 @@ export default function Calls() {
     const startedAt = callStartRef.current;
     const duration = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
     callStartRef.current = null;
+    setElapsedSeconds(0);
 
     api
       .post("/voice/call-log", {
@@ -220,6 +260,11 @@ export default function Calls() {
               {status === "calling" ? "Ringing" : "On call"}
             </p>
             <p className="text-2xl font-medium mt-1 text-black">{number}</p>
+            {status === "in-call" && (
+              <p className="text-sm font-mono font-medium mt-1 text-black/80" data-testid="call-duration">
+                {formatDuration(elapsedSeconds)}
+              </p>
+            )}
           </div>
           <button
             onClick={endCall}

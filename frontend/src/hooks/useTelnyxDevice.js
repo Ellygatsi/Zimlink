@@ -66,6 +66,10 @@ export function useTelnyxDevice(enabled = true) {
       if (notification.type === "callUpdate") {
         const state = call.state;
 
+        // TEMP DEBUG: log every call state transition so we can see
+        // exactly what fires (or doesn't) when the remote side hangs up.
+        console.log("TELNYX CALL STATE:", state, "direction:", call.direction);
+
         if (state === "ringing" && call.direction === "inbound") {
           setIncomingCall(call);
         }

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { ArrowRight, Phone, Wallet, Storefront, ChatsCircle, CalendarStar } from "@phosphor-icons/react";
+import HomeSlideshow from "@/components/HomeSlideshow";
 
 export default function Home() {
   const { user } = useAuth();
@@ -96,6 +97,12 @@ export default function Home() {
       {stats?.recent_listing && (
         <p className="text-[11px] md:text-sm text-neutral-500 px-1">Latest listing: {stats.recent_listing.title}</p>
       )}
+
+      {/* Zimbabwe photo band */}
+      <div>
+        <p className="text-[10px] md:text-xs font-medium tracking-widest text-green-500 uppercase mb-2">Home</p>
+        <HomeSlideshow />
+      </div>
     </div>
   );
 }
