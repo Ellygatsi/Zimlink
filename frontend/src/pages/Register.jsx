@@ -4,8 +4,6 @@ import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import logo from "@/Assets/logo.png";
-import logoDark from "@/Assets/logo-dark.png";
-
 import TermsModal from "@/components/TermsModal";
 
 export default function Register() {
@@ -13,15 +11,12 @@ export default function Register() {
   const navigate = useNavigate();
 
   const [step, setStep] = useState("details");
-
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
-
   const [busy, setBusy] = useState(false);
-
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
 
@@ -34,6 +29,7 @@ export default function Register() {
     }
 
     setBusy(true);
+
     try {
       await api.post("/auth/register/request-code", {
         name,
@@ -96,78 +92,63 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-5 bg-white dark:bg-black transition-colors">
+    <div className="min-h-screen flex items-center justify-center p-5 bg-white">
       <div className="w-full max-w-md">
-
-        {/* LOGO */}
-        <div className="mb-8 text-center flex flex-col items-center">
+        <div className="mb-6 text-center flex flex-col items-center">
           <img
             src={logo}
             alt="ZimLink"
-            className="w-64 md:w-80 mx-auto object-contain -mb-10 dark:hidden"
+            className="w-64 md:w-80 mx-auto object-contain"
           />
-          <img
-            src={logoDark}
-            alt="ZimLink"
-            className="w-64 md:w-80 mx-auto object-contain -mb-10 hidden dark:block"
-          />
-          <p className="text-[11px] tracking-[0.2em] text-neutral-500 mt-0 uppercase">
-            Connecting Zimbabwe. Connecting you.
-          </p>
         </div>
 
-        {/* STEP 1 - DETAILS */}
         {step === "details" ? (
           <form
             onSubmit={requestCode}
-            className="rounded-2xl p-8 space-y-5 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
+            className="rounded-2xl p-8 space-y-5 bg-neutral-100 border border-neutral-200 shadow-sm"
           >
-            <h2 className="text-2xl font-medium text-black dark:text-white">
+            <h2 className="text-2xl font-medium text-black">
               Create account.
             </h2>
 
-            {/* NAME */}
             <div>
               <label className="text-xs uppercase text-neutral-500">
                 Name
               </label>
               <input
-                className="w-full mt-2 h-11 rounded-lg px-3 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-black dark:text-white"
+                className="w-full mt-2 h-11 rounded-lg px-3 bg-white border border-neutral-200 text-black outline-none focus:border-green-600"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 required
               />
             </div>
 
-            {/* EMAIL */}
             <div>
               <label className="text-xs uppercase text-neutral-500">
                 Email
               </label>
               <input
                 type="email"
-                className="w-full mt-2 h-11 rounded-lg px-3 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-black dark:text-white"
+                className="w-full mt-2 h-11 rounded-lg px-3 bg-white border border-neutral-200 text-black outline-none focus:border-green-600"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
               />
             </div>
 
-            {/* PHONE */}
             <div>
               <label className="text-xs uppercase text-neutral-500">
                 Phone number
               </label>
               <input
                 type="tel"
-                className="w-full mt-2 h-11 rounded-lg px-3 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-black dark:text-white"
+                className="w-full mt-2 h-11 rounded-lg px-3 bg-white border border-neutral-200 text-black outline-none focus:border-green-600"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="+263..."
               />
             </div>
 
-            {/* PASSWORD */}
             <div>
               <label className="text-xs uppercase text-neutral-500">
                 Password
@@ -175,14 +156,13 @@ export default function Register() {
               <input
                 type="password"
                 minLength={6}
-                className="w-full mt-2 h-11 rounded-lg px-3 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-black dark:text-white"
+                className="w-full mt-2 h-11 rounded-lg px-3 bg-white border border-neutral-200 text-black outline-none focus:border-green-600"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
               />
             </div>
 
-            {/* TERMS */}
             <label className="flex items-start gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -203,56 +183,50 @@ export default function Register() {
               </span>
             </label>
 
-            {/* SUBMIT */}
             <button
               type="submit"
               disabled={busy || !agreedToTerms}
-              className="w-full h-12 rounded-xl bg-green-600 text-black font-medium disabled:opacity-50"
+              className="w-full h-12 rounded-xl bg-green-600 text-white font-medium disabled:opacity-50"
             >
               {busy ? "Sending code..." : "Send 6-digit code"}
             </button>
 
             <p className="text-sm text-center text-neutral-500">
               Have an account?{" "}
-              <Link
-                to="/login"
-                className="text-green-600 font-medium"
-              >
+              <Link to="/login" className="text-green-600 font-medium">
                 Sign in
               </Link>
             </p>
           </form>
         ) : (
-          /* STEP 2 - VERIFY */
           <form
             onSubmit={verifyCode}
-            className="rounded-2xl p-8 space-y-5 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
+            className="rounded-2xl p-8 space-y-5 bg-neutral-100 border border-neutral-200 shadow-sm"
           >
-            <h2 className="text-2xl font-medium text-black dark:text-white">
+            <h2 className="text-2xl font-medium text-black">
               Verify email.
             </h2>
 
             <p className="text-sm text-neutral-500">
               Enter code sent to{" "}
-              <span className="text-black dark:text-white font-medium">
-                {email}
-              </span>
+              <span className="text-black font-medium">{email}</span>
             </p>
 
             <input
               inputMode="numeric"
               maxLength={6}
-              className="w-full h-14 text-center text-2xl tracking-[0.4em] rounded-lg bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700"
+              className="w-full h-14 text-center text-2xl tracking-[0.4em] rounded-lg bg-white border border-neutral-200 text-black outline-none focus:border-green-600"
               value={code}
               onChange={(e) =>
                 setCode(e.target.value.replace(/\D/g, "").slice(0, 6))
               }
+              required
             />
 
             <button
               type="submit"
               disabled={busy || code.length !== 6}
-              className="w-full h-12 rounded-xl bg-green-600 text-black font-medium disabled:opacity-50"
+              className="w-full h-12 rounded-xl bg-green-600 text-white font-medium disabled:opacity-50"
             >
               {busy ? "Verifying..." : "Verify & create account"}
             </button>
@@ -277,12 +251,12 @@ export default function Register() {
           </form>
         )}
 
-        {/* TERMS MODAL */}
         <TermsModal
           open={showTerms}
           onClose={() => setShowTerms(false)}
           onAccept={() => {
             setAgreedToTerms(true);
+            setShowTerms(false);
           }}
         />
       </div>
