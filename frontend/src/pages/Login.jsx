@@ -86,8 +86,6 @@ export default function Login() {
       <div className="w-full max-w-md">
         <div className="mb-8 text-center flex flex-col items-center">
           <img src={logo} alt="ZimLink" className="w-64 md:w-80 mx-auto object-contain -mb-10" />
-          <p className="text-[11px] tracking-[0.2em] text-neutral-500 mt-0 uppercase">
-            Connecting Zimbabwe. Connecting you.
           </p>
         </div>
 
