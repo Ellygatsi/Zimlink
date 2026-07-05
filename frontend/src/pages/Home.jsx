@@ -16,12 +16,11 @@ export default function Home() {
   return (
     <div className="space-y-4 md:space-y-6 bg-black min-h-screen" data-testid="home-page">
       <div>
-        <p className="text-[10px] md:text-xs font-medium tracking-widest text-green-500 uppercase">Super hub</p>
         <h1 className="text-2xl md:text-6xl font-medium tracking-tight mt-1 md:mt-2 text-white">
           Hey, {user?.name?.split(" ")[0] || "friend"}.
         </h1>
         <p className="text-xs md:text-base text-neutral-400 mt-1.5 md:mt-3 max-w-xl">
-          Stay connected to Zimbabwe — calls, money, marketplace, and community in one place.
+          Stay connected to Home.
         </p>
       </div>
 
