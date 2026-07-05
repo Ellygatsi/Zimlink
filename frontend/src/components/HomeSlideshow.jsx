@@ -8,7 +8,7 @@ const SLIDES = [
   { src: "/Images/Homepage/eastern-highlands.jpg", caption: "Eastern Highlands" },
 ];
 
-const SLIDE_DURATION_MS = 4000;
+const SLIDE_DURATION_MS = 20000;
 
 export default function HomeSlideshow() {
   const [activeIndex, setActiveIndex] = useState(0);
