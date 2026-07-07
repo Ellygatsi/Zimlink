@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "@/lib/api";
 import { Plus, X, MagnifyingGlass, UploadSimple, Image } from "@phosphor-icons/react";
@@ -20,7 +20,7 @@ export default function Marketplace() {
   const [previews, setPreviews] = useState([]);
   const [busy, setBusy] = useState(false);
 
-  const load = async (cat = filter, query = q) => {
+  const load = useCallback(async (cat = filter, query = q) => {
     try {
       const params = {};
       if (cat !== "all") params.category = cat;
@@ -31,11 +31,11 @@ export default function Marketplace() {
     } catch {
       toast.error("Could not load listings");
     }
-  };
+  }, [filter, q]);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
 
   const handlePictureUpload = (e) => {
     const files = Array.from(e.target.files || []);
@@ -149,6 +149,7 @@ export default function Marketplace() {
         </div>
 
         <button
+          type="button"
           onClick={() => setShowCreate(true)}
           className="inline-flex items-center gap-2 rounded-full bg-green-600 text-black px-4 py-2 text-sm font-medium w-fit"
           data-testid="new-listing-button"
@@ -175,6 +176,7 @@ export default function Marketplace() {
         </div>
 
         <button
+          type="submit"
           className="rounded-lg px-5 bg-black dark:bg-white text-white dark:text-black font-medium"
           data-testid="market-search-button"
         >
@@ -190,6 +192,7 @@ export default function Marketplace() {
         ].map((t) => (
           <button
             key={t.key}
+            type="button"
             onClick={() => {
               setFilter(t.key);
               load(t.key, q);
@@ -459,6 +462,7 @@ export default function Marketplace() {
             </div>
 
             <button
+              type="submit"
               disabled={busy}
               className="w-full h-12 rounded-xl bg-green-600 text-black font-medium disabled:opacity-50"
               data-testid="listing-submit-button"
