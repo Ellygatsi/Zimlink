@@ -17,8 +17,10 @@ export default function Calls() {
   const [voiceConfig, setVoiceConfig] = useState(null);
   const [noBalance, setNoBalance] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
   const callStartRef = useRef(null);
   const timerRef = useRef(null);
+  const remoteAudioRef = useRef(null);
 
   const {
     status,
@@ -64,9 +66,27 @@ export default function Calls() {
     fetchQuote("+263");
   }, []);
 
-  // Start/stop the live running timer based on call status.
-  // Timer starts only once the call is actually "in-call" (accepted/connected),
-  // not while it's still "calling" (ringing).
+  useEffect(() => {
+    const audio = remoteAudioRef.current || document.getElementById("remoteAudio");
+
+    if (!audio) return;
+
+    audio.autoplay = true;
+    audio.playsInline = true;
+    audio.muted = false;
+    audio.volume = 1;
+
+    const tryPlay = async () => {
+      try {
+        await audio.play();
+      } catch (_err) {}
+    };
+
+    if (status === "in-call" || status === "calling") {
+      tryPlay();
+    }
+  }, [status, incomingCall]);
+
   useEffect(() => {
     if (status === "in-call") {
       if (!callStartRef.current) {
@@ -85,6 +105,7 @@ export default function Calls() {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
+
       if (status !== "in-call") {
         setElapsedSeconds(0);
       }
@@ -102,6 +123,7 @@ export default function Calls() {
     if (status === "ready" && callStartRef.current) {
       const duration = Math.floor((Date.now() - callStartRef.current) / 1000);
       const captured = number;
+
       callStartRef.current = null;
       setElapsedSeconds(0);
 
@@ -145,9 +167,7 @@ export default function Calls() {
       return;
     }
 
-    if (status !== "ready") {
-      return;
-    }
+    if (status !== "ready") return;
 
     try {
       await makeCall(target);
@@ -161,6 +181,7 @@ export default function Calls() {
           status: "failed",
         })
         .catch(() => {});
+
       loadHistory();
     }
   };
@@ -170,6 +191,7 @@ export default function Calls() {
 
     const startedAt = callStartRef.current;
     const duration = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
+
     callStartRef.current = null;
     setElapsedSeconds(0);
 
@@ -183,6 +205,23 @@ export default function Calls() {
       })
       .then(loadHistory)
       .catch(() => {});
+  };
+
+  const handleAcceptIncoming = async () => {
+    try {
+      await acceptIncoming();
+
+      setTimeout(() => {
+        const audio = remoteAudioRef.current || document.getElementById("remoteAudio");
+        if (audio) {
+          audio.muted = false;
+          audio.volume = 1;
+          audio.play().catch(() => {});
+        }
+      }, 300);
+    } catch (_err) {
+      toast.error("Could not accept the call.");
+    }
   };
 
   const isReady = voiceConfig?.enabled && status === "ready";
@@ -210,10 +249,23 @@ export default function Calls() {
 
   return (
     <div className="space-y-5 md:space-y-6" data-testid="calls-page">
+      <audio
+        id="remoteAudio"
+        ref={remoteAudioRef}
+        autoPlay
+        playsInline
+        controls={false}
+        className="hidden"
+      />
+
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-3">
         <div>
-          <p className="text-[10px] md:text-xs font-medium tracking-widest text-green-500 uppercase">Voice · Zimbabwe +263</p>
-          <h1 className="text-3xl md:text-6xl font-medium tracking-tight mt-1.5 md:mt-2 text-black dark:text-white">Calls.</h1>
+          <p className="text-[10px] md:text-xs font-medium tracking-widest text-green-500 uppercase">
+            Voice · Zimbabwe +263
+          </p>
+          <h1 className="text-3xl md:text-6xl font-medium tracking-tight mt-1.5 md:mt-2 text-black dark:text-white">
+            Calls.
+          </h1>
           <p className="text-xs md:text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 md:mt-2">
             Enter a number and call Zimbabwe mobile or landline numbers.
           </p>
@@ -234,14 +286,16 @@ export default function Calls() {
             <p className="text-[10px] font-medium tracking-widest text-black/70 uppercase">Incoming</p>
             <p className="text-2xl font-medium mt-1 text-black">{incomingNumber}</p>
           </div>
+
           <div className="flex gap-2">
             <button
-              onClick={acceptIncoming}
+              onClick={handleAcceptIncoming}
               className="inline-flex items-center gap-1.5 rounded-full bg-black text-white px-4 py-2 text-sm font-medium"
               data-testid="accept-incoming"
             >
               <Phone size={16} weight="fill" /> Accept
             </button>
+
             <button
               onClick={rejectIncoming}
               className="inline-flex items-center gap-1.5 rounded-full bg-red-600 text-white px-4 py-2 text-sm font-medium"
@@ -260,12 +314,14 @@ export default function Calls() {
               {status === "calling" ? "Ringing" : "On call"}
             </p>
             <p className="text-2xl font-medium mt-1 text-black">{number}</p>
+
             {status === "in-call" && (
               <p className="text-sm font-mono font-medium mt-1 text-black/80" data-testid="call-duration">
                 {formatDuration(elapsedSeconds)}
               </p>
             )}
           </div>
+
           <button
             onClick={endCall}
             className="inline-flex items-center gap-1.5 rounded-full bg-red-600 text-white px-4 py-2 text-sm font-medium"
@@ -278,6 +334,7 @@ export default function Calls() {
 
       <div className="rounded-2xl p-6 md:p-8 max-w-md mx-auto bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
         <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">Phone number</label>
+
         <input
           type="tel"
           inputMode="tel"
@@ -304,10 +361,15 @@ export default function Calls() {
         )}
 
         {!noBalance && quote && (
-          <div className="mt-3 flex items-center justify-between text-xs px-1 text-neutral-500 dark:text-neutral-400" data-testid="rate-quote">
+          <div
+            className="mt-3 flex items-center justify-between text-xs px-1 text-neutral-500 dark:text-neutral-400"
+            data-testid="rate-quote"
+          >
             <span>
               {quote.free ? "In-app · " : `${quote.rate_name} · `}
-              <span className="font-medium text-black dark:text-white">${quote.rate_per_minute.toFixed(2)}/min</span>
+              <span className="font-medium text-black dark:text-white">
+                ${quote.rate_per_minute.toFixed(2)}/min
+              </span>
             </span>
             <span>
               {quote.free ? "Free" : `~${Math.floor(quote.max_minutes)} min on $${quote.balance.toFixed(2)}`}
@@ -340,6 +402,7 @@ export default function Calls() {
                 {h.duration_seconds ? ` · ${Math.floor(h.duration_seconds / 60)}m ${h.duration_seconds % 60}s` : ""}
               </p>
             </div>
+
             <span
               className={`rounded-full px-3 py-1 text-xs font-medium ${
                 h.status === "completed"

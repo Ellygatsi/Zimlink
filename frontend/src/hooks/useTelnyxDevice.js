@@ -1,6 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { TelnyxRTC } from "@telnyx/webrtc";
 
+function attachRemoteAudio(call) {
+  const audio = document.getElementById("remoteAudio");
+
+  if (!audio || !call) return;
+
+  const remoteStream =
+    call.remoteStream ||
+    call.options?.remoteStream ||
+    call.peerConnection?.getRemoteStreams?.()?.[0];
+
+  if (remoteStream) {
+    audio.srcObject = remoteStream;
+    audio.muted = false;
+    audio.volume = 1;
+    audio.autoplay = true;
+    audio.playsInline = true;
+
+    audio.play().catch((err) => {
+      console.warn("Remote audio play blocked:", err);
+    });
+  }
+}
+
 export function useTelnyxDevice(enabled = true) {
   const clientRef = useRef(null);
   const callRef = useRef(null);
@@ -26,7 +49,9 @@ export function useTelnyxDevice(enabled = true) {
 
     if (!options) {
       setStatus("error");
-      setError("Missing Telnyx credentials. Add REACT_APP_TELNYX_LOGIN_TOKEN or REACT_APP_TELNYX_SIP_USERNAME and REACT_APP_TELNYX_SIP_PASSWORD to frontend/.env, then restart npm start.");
+      setError(
+        "Missing Telnyx credentials. Add REACT_APP_TELNYX_LOGIN_TOKEN or REACT_APP_TELNYX_SIP_USERNAME and REACT_APP_TELNYX_SIP_PASSWORD."
+      );
       return;
     }
 
@@ -49,7 +74,7 @@ export function useTelnyxDevice(enabled = true) {
     client.on("telnyx.socket.close", () => {
       connectedRef.current = false;
       setStatus("error");
-      setError("Telnyx connection closed. Check Telnyx credentials and WebRTC connection settings.");
+      setError("Telnyx connection closed.");
     });
 
     client.on("telnyx.error", (err) => {
@@ -66,18 +91,20 @@ export function useTelnyxDevice(enabled = true) {
       if (notification.type === "callUpdate") {
         const state = call.state;
 
-        // TEMP DEBUG: log every call state transition so we can see
-        // exactly what fires (or doesn't) when the remote side hangs up.
         console.log("TELNYX CALL STATE:", state, "direction:", call.direction);
 
         if (state === "ringing" && call.direction === "inbound") {
+          callRef.current = call;
           setIncomingCall(call);
         }
 
         if (["trying", "requesting", "recovering", "early", "ringing"].includes(state)) {
           callRef.current = call;
           setActiveCall(call);
-          if (call.direction !== "inbound") setStatus("calling");
+
+          if (call.direction !== "inbound") {
+            setStatus("calling");
+          }
         }
 
         if (["active", "held"].includes(state)) {
@@ -85,9 +112,19 @@ export function useTelnyxDevice(enabled = true) {
           setActiveCall(call);
           setIncomingCall(null);
           setStatus("in-call");
+
+          setTimeout(() => attachRemoteAudio(call), 100);
+          setTimeout(() => attachRemoteAudio(call), 500);
+          setTimeout(() => attachRemoteAudio(call), 1200);
         }
 
         if (["hangup", "destroy", "purge"].includes(state)) {
+          const audio = document.getElementById("remoteAudio");
+          if (audio) {
+            audio.pause();
+            audio.srcObject = null;
+          }
+
           callRef.current = null;
           setActiveCall(null);
           setIncomingCall(null);
@@ -101,39 +138,61 @@ export function useTelnyxDevice(enabled = true) {
     return () => {
       try {
         if (callRef.current) callRef.current.hangup();
+
+        const audio = document.getElementById("remoteAudio");
+        if (audio) {
+          audio.pause();
+          audio.srcObject = null;
+        }
+
         client.disconnect();
       } catch (_e) {}
+
       callRef.current = null;
       clientRef.current = null;
       connectedRef.current = false;
     };
   }, [enabled]);
 
-  const makeCall = useCallback(async (destinationNumber) => {
-    const client = clientRef.current;
-    if (!client || status !== "ready") {
-      throw new Error(`Telnyx client is not ready yet (${status}).`);
-    }
+  const makeCall = useCallback(
+    async (destinationNumber) => {
+      const client = clientRef.current;
 
-    const callerName = process.env.REACT_APP_TELNYX_CALLER_NAME || "ZimLink";
-    const callerNumber = process.env.REACT_APP_TELNYX_CALLER_NUMBER || "";
+      if (!client || status !== "ready") {
+        throw new Error(`Telnyx client is not ready yet (${status}).`);
+      }
 
-    const call = client.newCall({
-      destinationNumber,
-      callerName,
-      callerNumber,
-    });
+      const callerName = process.env.REACT_APP_TELNYX_CALLER_NAME || "ZimLink";
+      const callerNumber = process.env.REACT_APP_TELNYX_CALLER_NUMBER || "";
 
-    callRef.current = call;
-    setActiveCall(call);
-    setStatus("calling");
-    return call;
-  }, [status]);
+      const call = client.newCall({
+        destinationNumber,
+        callerName,
+        callerNumber,
+      });
+
+      callRef.current = call;
+      setActiveCall(call);
+      setStatus("calling");
+
+      setTimeout(() => attachRemoteAudio(call), 500);
+
+      return call;
+    },
+    [status]
+  );
 
   const hangup = useCallback(() => {
     try {
       if (callRef.current) callRef.current.hangup();
+
+      const audio = document.getElementById("remoteAudio");
+      if (audio) {
+        audio.pause();
+        audio.srcObject = null;
+      }
     } catch (_e) {}
+
     callRef.current = null;
     setActiveCall(null);
     setIncomingCall(null);
@@ -143,10 +202,15 @@ export function useTelnyxDevice(enabled = true) {
   const acceptIncoming = useCallback(() => {
     if (incomingCall) {
       incomingCall.answer();
+
       callRef.current = incomingCall;
       setActiveCall(incomingCall);
       setIncomingCall(null);
       setStatus("in-call");
+
+      setTimeout(() => attachRemoteAudio(incomingCall), 100);
+      setTimeout(() => attachRemoteAudio(incomingCall), 500);
+      setTimeout(() => attachRemoteAudio(incomingCall), 1200);
     }
   }, [incomingCall]);
 
