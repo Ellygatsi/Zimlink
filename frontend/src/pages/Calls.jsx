@@ -18,6 +18,11 @@ export default function Calls() {
   const [noBalance, setNoBalance] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
+  // Tracks whether the call actually connected (status hit "in-call").
+  // Used so we never log/bill a call that only rang and was never answered
+  // as if it had connected.
+  const hasConnectedRef = useRef(false);
+
   const callStartRef = useRef(null);
   const timerRef = useRef(null);
   const remoteAudioRef = useRef(null);
@@ -87,8 +92,11 @@ export default function Calls() {
     }
   }, [status, incomingCall]);
 
+  // Timer / billing clock: only ever starts once status is truly "in-call".
   useEffect(() => {
     if (status === "in-call") {
+      hasConnectedRef.current = true;
+
       if (!callStartRef.current) {
         callStartRef.current = Date.now();
       }
@@ -126,6 +134,7 @@ export default function Calls() {
 
       callStartRef.current = null;
       setElapsedSeconds(0);
+      hasConnectedRef.current = false;
 
       api
         .post("/voice/call-log", {
@@ -169,6 +178,8 @@ export default function Calls() {
 
     if (status !== "ready") return;
 
+    hasConnectedRef.current = false;
+
     try {
       await makeCall(target);
     } catch (_err) {
@@ -191,17 +202,22 @@ export default function Calls() {
 
     const startedAt = callStartRef.current;
     const duration = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
+    const wasConnected = hasConnectedRef.current;
 
     callStartRef.current = null;
     setElapsedSeconds(0);
+    hasConnectedRef.current = false;
 
+    // If the call never actually connected (still "calling"/ringing when the
+    // user hung up), log it as no_answer with zero duration instead of
+    // "completed" — otherwise unanswered calls look identical to real ones.
     api
       .post("/voice/call-log", {
         to: number,
         to_name: "",
         direction: "outbound",
-        duration_seconds: duration,
-        status: "completed",
+        duration_seconds: wasConnected ? duration : 0,
+        status: wasConnected ? "completed" : "no_answer",
       })
       .then(loadHistory)
       .catch(() => {});
@@ -246,6 +262,19 @@ export default function Calls() {
     incomingCall?.remoteCallerNumber ||
     incomingCall?.callerNumber ||
     "Unknown caller";
+
+  const statusBadgeClasses = (s) => {
+    if (s === "completed") return "bg-green-600 text-black";
+    if (s === "failed" || s === "billing_failed") return "bg-red-600 text-white";
+    if (s === "no_answer") return "bg-yellow-500 text-black";
+    return "bg-neutral-200 dark:bg-neutral-800 text-black dark:text-white";
+  };
+
+  const statusBadgeLabel = (s) => {
+    if (s === "no_answer") return "no answer";
+    if (s === "billing_failed") return "billing failed";
+    return s;
+  };
 
   return (
     <div className="space-y-5 md:space-y-6" data-testid="calls-page">
@@ -390,7 +419,7 @@ export default function Calls() {
           </div>
         )}
 
-        {history.slice(0, 8).map((h) => (
+        {history.map((h) => (
           <div
             key={h.id}
             className="rounded-xl p-4 flex items-center justify-between bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
@@ -403,16 +432,8 @@ export default function Calls() {
               </p>
             </div>
 
-            <span
-              className={`rounded-full px-3 py-1 text-xs font-medium ${
-                h.status === "completed"
-                  ? "bg-green-600 text-black"
-                  : h.status === "failed" || h.status === "billing_failed"
-                  ? "bg-red-600 text-white"
-                  : "bg-neutral-200 dark:bg-neutral-800 text-black dark:text-white"
-              }`}
-            >
-              {h.status}
+            <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadgeClasses(h.status)}`}>
+              {statusBadgeLabel(h.status)}
             </span>
           </div>
         ))}

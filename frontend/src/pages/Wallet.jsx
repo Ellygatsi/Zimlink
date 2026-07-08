@@ -10,7 +10,7 @@ export default function WalletPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  const sessionId = searchParams.get("session_id");
+  const sessionId = searchParams.get("session_id") || searchParams.get("success");
   const cancelled = searchParams.get("cancelled");
 
   const [balance, setBalance] = useState(0);
@@ -26,8 +26,8 @@ export default function WalletPage() {
       api.get("/wallet/transactions"),
     ]);
 
-    setBalance(b.data.balance);
-    setTxs(t.data);
+    setBalance(Number(b.data.balance || 0));
+    setTxs(t.data || []);
   };
 
   useEffect(() => {
@@ -37,8 +37,8 @@ export default function WalletPage() {
       api.get("/wallet/topup/packages"),
     ])
       .then(([b, t, p]) => {
-        setBalance(b.data.balance);
-        setTxs(t.data);
+        setBalance(Number(b.data.balance || 0));
+        setTxs(t.data || []);
         setPackages(p.data);
       })
       .catch(() => {});
@@ -48,12 +48,11 @@ export default function WalletPage() {
     if (!sessionId) return;
 
     let stopped = false;
-    const attemptsRef = { current: 0 };
+    let attempts = 0;
 
     const tick = () => {
       if (stopped) return;
-
-      attemptsRef.current += 1;
+      attempts += 1;
 
       api
         .get(`/wallet/topup/status/${sessionId}`)
@@ -64,17 +63,19 @@ export default function WalletPage() {
             data.payment_status === "paid" ||
             data.payment_status === "succeeded" ||
             data.status === "paid" ||
-            data.status === "succeeded"
+            data.status === "succeeded" ||
+            data.status === "completed"
           ) {
             setPollStatus({ state: "success", info: data });
+
             toast.success(
-              `Wallet credited with $${Number(data.credited || 0).toFixed(2)}!`
+              `Wallet credited with $${Number(data.credited || data.amount || 0).toFixed(2)}!`
             );
 
             reload();
             refresh();
 
-            setTimeout(() => navigate("/wallet", { replace: true }), 4000);
+            setTimeout(() => navigate("/wallet", { replace: true }), 3500);
             return;
           }
 
@@ -89,7 +90,7 @@ export default function WalletPage() {
 
           setPollStatus({ state: "pending", info: data });
 
-          if (attemptsRef.current < 8) {
+          if (attempts < 10) {
             setTimeout(tick, 2000);
           } else {
             setPollStatus({ state: "timeout", info: data });
@@ -116,18 +117,34 @@ export default function WalletPage() {
     }
   }, [cancelled, navigate]);
 
-  const startTopUp = async (pkgAmount) => {
+  const normalizePackages = () => {
+    const raw = packages?.packages || [];
+
+    return raw.map((p) => {
+      if (typeof p === "number") return p;
+      if (typeof p === "string") return Number(p);
+      return Number(p.amount || p.package_amount || 0);
+    }).filter((n) => n > 0);
+  };
+
+  const startTopUp = async (amount) => {
     setBusy(true);
 
     try {
       const { data } = await api.post("/wallet/topup/checkout", {
-        package_amount: pkgAmount,
+        package_amount: amount,
         origin_url: window.location.origin,
       });
 
-      window.location.assign(data.url);
+      const checkoutUrl = data.checkout_url || data.url;
+
+      if (!checkoutUrl) {
+        throw new Error("No checkout URL returned");
+      }
+
+      window.location.assign(checkoutUrl);
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Could not start Airwallex checkout");
+      toast.error(err?.response?.data?.detail || "Could not start checkout");
       setBusy(false);
     }
   };
@@ -170,10 +187,7 @@ export default function WalletPage() {
             {pollStatus.state === "success" && (
               <p className="font-medium text-sm">
                 Top-up successful! $
-                {Number(pollStatus.info?.credited || 0).toFixed(2)} credited
-                {pollStatus.info?.fee !== undefined &&
-                  ` (fee: $${Number(pollStatus.info?.fee || 0).toFixed(2)})`}
-                .
+                {Number(pollStatus.info?.credited || pollStatus.info?.amount || 0).toFixed(2)} has been added to your wallet.
               </p>
             )}
 
@@ -185,7 +199,7 @@ export default function WalletPage() {
 
             {pollStatus.state === "timeout" && (
               <p className="font-medium text-sm">
-                Still confirming with Airwallex. Refresh in a minute — your balance will update once payment is confirmed.
+                Still confirming your payment. Refresh in a minute — your balance will update once payment is confirmed.
               </p>
             )}
 
@@ -245,26 +259,35 @@ export default function WalletPage() {
             </div>
           )}
 
-          {txs.map((tx) => (
-            <div
-              key={tx.id}
-              className="rounded-xl p-4 flex items-center justify-between bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
-            >
-              <div>
-                <p className="font-medium text-sm text-black dark:text-white">
-                  Wallet top-up
-                </p>
-                <p className="text-xs text-neutral-500">
-                  {new Date(tx.created_at).toLocaleString()}
-                  {tx.note ? ` · ${tx.note}` : ""}
+          {txs.map((tx) => {
+            const amount = Number(
+              tx.amount ||
+              tx.credited_amount ||
+              tx.package_amount ||
+              0
+            );
+
+            return (
+              <div
+                key={tx.id}
+                className="rounded-xl p-4 flex items-center justify-between bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
+              >
+                <div>
+                  <p className="font-medium text-sm text-black dark:text-white">
+                    {tx.from_email || tx.to_email ? "Wallet transfer" : "Wallet top-up"}
+                  </p>
+                  <p className="text-xs text-neutral-500">
+                    {new Date(tx.created_at).toLocaleString()}
+                    {tx.note ? ` · ${tx.note}` : ""}
+                  </p>
+                </div>
+
+                <p className="text-base font-medium text-green-600 dark:text-green-500">
+                  +${amount.toFixed(2)}
                 </p>
               </div>
-
-              <p className="text-base font-medium text-green-600 dark:text-green-500">
-                +${Number(tx.amount || 0).toFixed(2)}
-              </p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -294,40 +317,31 @@ export default function WalletPage() {
             </div>
 
             <p className="text-sm text-neutral-500">
-              Add funds securely via Airwallex.{" "}
-              {packages.deposit_fee_percent > 0 && (
-                <>
-                  A{" "}
-                  <span className="font-medium text-black dark:text-white">
-                    {packages.deposit_fee_percent}%
-                  </span>{" "}
-                  processing fee applies.
-                </>
-              )}
+              Add funds securely using your debit or credit card. The full amount you choose will be added to your ZimLink wallet.
             </p>
 
             <div className="grid grid-cols-2 gap-3">
-              {packages.packages.map((p) => (
+              {normalizePackages().map((amount) => (
                 <button
-                  key={p.amount}
-                  onClick={() => startTopUp(p.amount)}
+                  key={amount}
+                  onClick={() => startTopUp(amount)}
                   disabled={busy}
-                  data-testid={`topup-package-${p.amount}`}
+                  data-testid={`topup-package-${amount}`}
                   className="rounded-xl p-4 text-left bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 hover:border-green-600 transition-colors disabled:opacity-50"
                 >
                   <span className="text-2xl font-medium text-black dark:text-white block">
-                    ${p.amount.toFixed(0)}
+                    ${amount.toFixed(0)}
                   </span>
 
                   <span className="text-xs text-neutral-500 font-medium mt-1 block">
-                    +${p.credited.toFixed(2)} credit · ${p.fee.toFixed(2)} fee
+                    Instant wallet top-up
                   </span>
                 </button>
               ))}
             </div>
 
             <p className="text-xs text-neutral-500 text-center">
-              Payments powered by Airwallex.
+              Payments securely processed by Stripe.
             </p>
           </div>
         </div>
