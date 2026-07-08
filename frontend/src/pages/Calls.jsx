@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import api from "@/lib/api";
-import { Phone, PhoneDisconnect, CheckCircle, XCircle } from "@phosphor-icons/react";
+import {
+  Phone,
+  PhoneDisconnect,
+  CheckCircle,
+  XCircle,
+  SpeakerHigh,
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { useTelnyxDevice } from "@/hooks/useTelnyxDevice";
 
@@ -17,12 +23,10 @@ export default function Calls() {
   const [voiceConfig, setVoiceConfig] = useState(null);
   const [noBalance, setNoBalance] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [audioDevices, setAudioDevices] = useState([]);
+  const [selectedOutputDevice, setSelectedOutputDevice] = useState("");
 
-  // Tracks whether the call actually connected (status hit "in-call").
-  // Used so we never log/bill a call that only rang and was never answered
-  // as if it had connected.
   const hasConnectedRef = useRef(false);
-
   const callStartRef = useRef(null);
   const timerRef = useRef(null);
   const remoteAudioRef = useRef(null);
@@ -65,11 +69,57 @@ export default function Calls() {
     }
   };
 
+  const loadAudioOutputs = async () => {
+    try {
+      if (!navigator.mediaDevices?.enumerateDevices) {
+        toast.error("Audio device selection is not supported on this browser.");
+        return;
+      }
+
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const outputs = devices.filter((d) => d.kind === "audiooutput");
+
+      setAudioDevices(outputs);
+
+      if (outputs.length && !selectedOutputDevice) {
+        setSelectedOutputDevice(outputs[0].deviceId);
+      }
+    } catch (_err) {
+      toast.error("Could not load speaker or Bluetooth devices.");
+    }
+  };
+
+  const changeAudioOutput = async (deviceId) => {
+    const audio = remoteAudioRef.current || document.getElementById("remoteAudio");
+    if (!audio) return;
+
+    if (!audio.setSinkId) {
+      toast.error("Speaker or Bluetooth switching is not supported on this browser.");
+      return;
+    }
+
+    try {
+      await audio.setSinkId(deviceId);
+      setSelectedOutputDevice(deviceId);
+      toast.success("Audio output changed.");
+    } catch (_err) {
+      toast.error("Could not switch audio output.");
+    }
+  };
+
   useEffect(() => {
     loadConfig();
     loadHistory();
     fetchQuote("+263");
   }, []);
+
+  useEffect(() => {
+    if (status === "in-call") {
+      loadAudioOutputs();
+    }
+  }, [status]);
 
   useEffect(() => {
     const audio = remoteAudioRef.current || document.getElementById("remoteAudio");
@@ -92,7 +142,6 @@ export default function Calls() {
     }
   }, [status, incomingCall]);
 
-  // Timer / billing clock: only ever starts once status is truly "in-call".
   useEffect(() => {
     if (status === "in-call") {
       hasConnectedRef.current = true;
@@ -114,9 +163,7 @@ export default function Calls() {
         timerRef.current = null;
       }
 
-      if (status !== "in-call") {
-        setElapsedSeconds(0);
-      }
+      setElapsedSeconds(0);
     }
 
     return () => {
@@ -208,9 +255,6 @@ export default function Calls() {
     setElapsedSeconds(0);
     hasConnectedRef.current = false;
 
-    // If the call never actually connected (still "calling"/ringing when the
-    // user hung up), log it as no_answer with zero duration instead of
-    // "completed" — otherwise unanswered calls look identical to real ones.
     api
       .post("/voice/call-log", {
         to: number,
@@ -345,9 +389,36 @@ export default function Calls() {
             <p className="text-2xl font-medium mt-1 text-black">{number}</p>
 
             {status === "in-call" && (
-              <p className="text-sm font-mono font-medium mt-1 text-black/80" data-testid="call-duration">
-                {formatDuration(elapsedSeconds)}
-              </p>
+              <>
+                <p className="text-sm font-mono font-medium mt-1 text-black/80" data-testid="call-duration">
+                  {formatDuration(elapsedSeconds)}
+                </p>
+
+                <div className="mt-3 flex flex-col gap-2">
+                  <button
+                    onClick={loadAudioOutputs}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-black text-white px-3 py-1.5 text-xs font-medium w-fit"
+                    type="button"
+                  >
+                    <SpeakerHigh size={14} weight="fill" />
+                    Speaker / Bluetooth
+                  </button>
+
+                  {audioDevices.length > 0 && (
+                    <select
+                      value={selectedOutputDevice}
+                      onChange={(e) => changeAudioOutput(e.target.value)}
+                      className="max-w-xs rounded-lg bg-white text-black px-3 py-2 text-xs outline-none"
+                    >
+                      {audioDevices.map((device, index) => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {device.label || `Audio output ${index + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </>
             )}
           </div>
 
@@ -391,17 +462,13 @@ export default function Calls() {
 
         {!noBalance && quote && (
           <div
-            className="mt-3 flex items-center justify-between text-xs px-1 text-neutral-500 dark:text-neutral-400"
+            className="mt-3 text-center text-xs px-1 text-neutral-500 dark:text-neutral-400"
             data-testid="rate-quote"
           >
-            <span>
-              {quote.free ? "In-app · " : `${quote.rate_name} · `}
-              <span className="font-medium text-black dark:text-white">
-                ${quote.rate_per_minute.toFixed(2)}/min
-              </span>
-            </span>
-            <span>
-              {quote.free ? "Free" : `~${Math.floor(quote.max_minutes)} min on $${quote.balance.toFixed(2)}`}
+            <span className="font-medium text-black dark:text-white">
+              {quote.free
+                ? "Free in-app call"
+                : `You can call for about ${Math.floor(quote.max_minutes)} minutes with your current balance.`}
             </span>
           </div>
         )}
