@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import api from "@/lib/api";
 import {
   Phone,
@@ -69,7 +69,7 @@ export default function Calls() {
     }
   };
 
-  const loadAudioOutputs = async () => {
+  const loadAudioOutputs = useCallback(async () => {
     try {
       if (!navigator.mediaDevices?.enumerateDevices) {
         toast.error("Audio device selection is not supported on this browser.");
@@ -89,7 +89,7 @@ export default function Calls() {
     } catch (_err) {
       toast.error("Could not load speaker or Bluetooth devices.");
     }
-  };
+  }, [selectedOutputDevice]);
 
   const changeAudioOutput = async (deviceId) => {
     const audio = remoteAudioRef.current || document.getElementById("remoteAudio");
@@ -119,11 +119,10 @@ export default function Calls() {
     if (status === "in-call") {
       loadAudioOutputs();
     }
-  }, [status]);
+  }, [status, loadAudioOutputs]);
 
   useEffect(() => {
     const audio = remoteAudioRef.current || document.getElementById("remoteAudio");
-
     if (!audio) return;
 
     audio.autoplay = true;
