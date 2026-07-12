@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
@@ -12,10 +13,12 @@ import {
   X,
   ShieldCheck,
   CheckCircle,
+  ArrowLeft,
 } from "@phosphor-icons/react";
 
 export default function Profile() {
   const { user, logout, refresh } = useAuth();
+  const navigate = useNavigate();
 
   const [activePanel, setActivePanel] = useState(null);
 
@@ -210,7 +213,7 @@ export default function Profile() {
     },
     {
       key: "support",
-      title: "Support",
+      title: "Contact Support",
       description: "Get help or send us a message",
       icon: ChatCircle,
       iconClasses:
@@ -232,18 +235,26 @@ export default function Profile() {
       className="mx-auto w-full max-w-3xl space-y-6"
       data-testid="profile-page"
     >
-      <div>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-green-600 md:text-xs">
-          Account
-        </p>
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          aria-label="Go back"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-neutral-200 bg-white text-black shadow-sm transition-all hover:-translate-x-0.5 hover:bg-neutral-100 hover:shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-white dark:hover:bg-neutral-800"
+          data-testid="profile-back-button"
+        >
+          <ArrowLeft size={22} weight="bold" />
+        </button>
 
-        <h1 className="mt-1 text-3xl font-semibold tracking-tight text-black dark:text-white md:text-5xl">
-          My account
-        </h1>
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight text-black dark:text-white md:text-5xl">
+            My account
+          </h1>
 
-        <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
-          Manage your profile, security, and support settings.
-        </p>
+          <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
+            Manage your profile, security, and support settings.
+          </p>
+        </div>
       </div>
 
       {/* Profile overview */}
