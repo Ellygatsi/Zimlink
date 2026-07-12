@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 
 const SLIDES = [
-  { src: "/Images/Homepage/victoria-falls.jpg", caption: "Victoria Falls" },
-  { src: "/Images/Homepage/great-zimbabwe.jpg", caption: "Great Zimbabwe" },
-  { src: "/Images/Homepage/harare-cbd.jpg", caption: "Harare CBD" },
-  { src: "/Images/Homepage/lake-kariba.jpg", caption: "Chinhoyi Caves" },
-  { src: "/Images/Homepage/eastern-highlands.jpg", caption: "Eastern Highlands" },
+  { src: "/images/Homepage/victoria-falls.jpg", caption: "Victoria Falls" },
+  { src: "/images/Homepage/great-zimbabwe.jpg", caption: "Great Zimbabwe" },
+  { src: "/images/Homepage/harare-cbd.jpg", caption: "Harare CBD" },
+  { src: "/images/Homepage/lake-kariba.jpg", caption: "Chinhoyi Caves" },
+  { src: "/images/Homepage/eastern-highlands.jpg", caption: "Eastern Highlands" },
 ];
 
 const SLIDE_DURATION_MS = 20000;
