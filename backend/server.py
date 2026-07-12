@@ -21,7 +21,6 @@ from typing import Optional, List, Literal
 import qrcode
 import io
 import base64
-from email_templates import zimlink_email_template
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, status
 from starlette.middleware.cors import CORSMiddleware
@@ -146,35 +145,274 @@ async def verify_code(email: str, purpose: str, code: str) -> dict:
 
     return record
 
+
+def get_email_logo_url() -> str:
+    return os.environ.get(
+        "ZIMLINK_LOGO_URL",
+        "https://www.zimlink.me/images/logo.png",
+    ).strip()
+
+
+def branded_email_template(
+    title: str,
+    preview_text: str,
+    content_html: str,
+    eyebrow: str = "ZimLink",
+    footer_text: str = "This is an automated email from ZimLink.",
+) -> str:
+    """
+    Shared modern email shell used by every ZimLink email.
+
+    The logo sits on a white background because the supplied logo image already
+    has a white background. Green is used below the logo as an accent rather
+    than as a ribbon behind it.
+    """
+    safe_logo_url = escape(get_email_logo_url(), quote=True)
+    safe_title = escape(title)
+    safe_preview_text = escape(preview_text)
+    safe_eyebrow = escape(eyebrow)
+    safe_footer_text = escape(footer_text)
+
+    return f"""
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <meta name="x-apple-disable-message-reformatting" />
+        <title>{safe_title}</title>
+      </head>
+
+      <body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;color:#111111;">
+        <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+          {safe_preview_text}
+        </div>
+
+        <table
+          role="presentation"
+          width="100%"
+          cellspacing="0"
+          cellpadding="0"
+          border="0"
+          style="width:100%;background:#f4f4f5;"
+        >
+          <tr>
+            <td align="center" style="padding:28px 12px;">
+              <table
+                role="presentation"
+                width="100%"
+                cellspacing="0"
+                cellpadding="0"
+                border="0"
+                style="width:100%;max-width:580px;background:#ffffff;border:1px solid #e5e7eb;border-radius:20px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,0.06);"
+              >
+                <tr>
+                  <td align="center" style="background:#ffffff;padding:28px 24px 22px;">
+                    <img
+                      src="{safe_logo_url}"
+                      alt="ZimLink"
+                      width="210"
+                      style="display:block;width:210px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;"
+                    />
+                  </td>
+                </tr>
+
+                <tr>
+                  <td style="height:5px;background:#16a34a;font-size:0;line-height:0;">
+                    &nbsp;
+                  </td>
+                </tr>
+
+                <tr>
+                  <td style="padding:32px 30px 12px;">
+                    <p style="margin:0 0 10px;font-size:11px;line-height:1.4;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#16a34a;">
+                      {safe_eyebrow}
+                    </p>
+
+                    <h1 style="margin:0;font-size:27px;line-height:1.25;font-weight:700;color:#111111;">
+                      {safe_title}
+                    </h1>
+                  </td>
+                </tr>
+
+                <tr>
+                  <td style="padding:8px 30px 34px;">
+                    {content_html}
+                  </td>
+                </tr>
+
+                <tr>
+                  <td style="background:#fafafa;border-top:1px solid #eeeeee;padding:20px 30px;text-align:center;">
+                    <p style="margin:0;font-size:11px;line-height:1.6;color:#a1a1aa;">
+                      {safe_footer_text}
+                    </p>
+
+                    <p style="margin:6px 0 0;font-size:11px;line-height:1.6;color:#a1a1aa;">
+                      © ZimLink
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+    </html>
+    """
+
+
 def send_email_code(to_email: str, code: str, purpose: str) -> None:
     app_name = os.environ.get("APP_NAME", "ZimLink").strip() or "ZimLink"
     resend_api_key = os.environ.get("RESEND_API_KEY", "").strip()
-    from_email = os.environ.get("FROM_EMAIL", "ZimLink <info@zimlink.me>").strip()
+    from_email = os.environ.get(
+        "FROM_EMAIL",
+        "ZimLink <info@zimlink.me>",
+    ).strip()
 
     if not resend_api_key:
         logger.warning("RESEND_API_KEY is missing. Email was not sent.")
-        logger.warning(f"EMAIL CODE for {to_email} ({purpose}): {code}")
+        logger.warning("EMAIL CODE for %s (%s): %s", to_email, purpose, code)
         return
 
     resend.api_key = resend_api_key
 
-    subject = f"Your {app_name} verification code"
-    if purpose == "password_reset":
-        subject = f"Reset your {app_name} password"
+    purpose_content = {
+        "register": {
+            "subject": f"Verify your {app_name} account",
+            "title": "Verify your email",
+            "preview": "Use your six-digit code to finish creating your ZimLink account.",
+            "eyebrow": "Account verification",
+            "message": (
+                "Use the six-digit verification code below to finish creating "
+                "your ZimLink account."
+            ),
+            "notice": (
+                "This code expires in 15 minutes. Do not share it with anyone."
+            ),
+        },
+        "password_reset": {
+            "subject": f"Reset your {app_name} password",
+            "title": "Reset your password",
+            "preview": "Use your six-digit code to reset your ZimLink password.",
+            "eyebrow": "Password recovery",
+            "message": (
+                "We received a request to reset your password. Enter the "
+                "six-digit code below in ZimLink to continue."
+            ),
+            "notice": (
+                "This code expires in 15 minutes. If you did not request a "
+                "password reset, you can safely ignore this email."
+            ),
+        },
+        "email_change_old": {
+            "subject": f"Confirm your current {app_name} email",
+            "title": "Confirm your current email",
+            "preview": "Use your six-digit code to approve your email-address change.",
+            "eyebrow": "Security confirmation",
+            "message": (
+                "Use the code below to confirm that you requested to change "
+                "the email address on your ZimLink account."
+            ),
+            "notice": (
+                "This code expires in 15 minutes. Do not share it with anyone."
+            ),
+        },
+        "email_change_new": {
+            "subject": f"Verify your new {app_name} email",
+            "title": "Verify your new email",
+            "preview": "Use your six-digit code to verify your new ZimLink email.",
+            "eyebrow": "Email verification",
+            "message": (
+                "Use the code below to verify this email address and complete "
+                "the change on your ZimLink account."
+            ),
+            "notice": (
+                "This code expires in 15 minutes. Do not share it with anyone."
+            ),
+        },
+        "delete_account": {
+            "subject": f"Confirm your {app_name} account deletion",
+            "title": "Confirm account deletion",
+            "preview": "Use your six-digit code to confirm deletion of your ZimLink account.",
+            "eyebrow": "Important security action",
+            "message": (
+                "A request was made to permanently delete your ZimLink account. "
+                "Enter the code below only if you made this request."
+            ),
+            "notice": (
+                "This code expires in 15 minutes. If you did not request this, "
+                "do not use the code and contact ZimLink support."
+            ),
+        },
+    }
 
-    html = zimlink_email_template(code, purpose)
+    details = purpose_content.get(
+        purpose,
+        {
+            "subject": f"Your {app_name} verification code",
+            "title": "Your verification code",
+            "preview": "Use your six-digit ZimLink verification code.",
+            "eyebrow": "Security verification",
+            "message": "Use the six-digit verification code below to continue.",
+            "notice": "This code expires in 15 minutes. Do not share it with anyone.",
+        },
+    )
+
+    safe_code = escape(code)
+    safe_message = escape(details["message"])
+    safe_notice = escape(details["notice"])
+
+    content_html = f"""
+      <p style="margin:0;font-size:15px;line-height:1.7;color:#52525b;">
+        {safe_message}
+      </p>
+
+      <div style="margin:28px 0;text-align:center;">
+        <div style="display:inline-block;min-width:250px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:16px;padding:20px 18px;">
+          <p style="margin:0 0 8px;font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#15803d;">
+            Verification code
+          </p>
+
+          <p style="margin:0;font-size:36px;line-height:1.1;font-weight:700;letter-spacing:9px;color:#111111;">
+            {safe_code}
+          </p>
+        </div>
+      </div>
+
+      <div style="background:#fafafa;border:1px solid #eeeeee;border-radius:12px;padding:15px 16px;">
+        <p style="margin:0;font-size:13px;line-height:1.6;color:#71717a;">
+          {safe_notice}
+        </p>
+      </div>
+    """
+
+    html = branded_email_template(
+        title=details["title"],
+        preview_text=details["preview"],
+        content_html=content_html,
+        eyebrow=details["eyebrow"],
+        footer_text=(
+            "This is an automated security email from ZimLink. "
+            "Please do not reply."
+        ),
+    )
 
     try:
         resend.Emails.send({
             "from": from_email,
             "to": [to_email],
-            "subject": subject,
+            "subject": details["subject"],
             "html": html,
         })
-        logger.info(f"Sent {purpose} code to {to_email} from {from_email}")
+        logger.info(
+            "Sent %s code to %s from %s",
+            purpose,
+            to_email,
+            from_email,
+        )
     except Exception as exc:
-        logger.error(f"Could not send Resend email to {to_email}: {exc}")
-        logger.warning(f"EMAIL CODE for {to_email} ({purpose}): {code}")
+        logger.error("Could not send Resend email to %s: %s", to_email, exc)
+        logger.warning("EMAIL CODE for %s (%s): %s", to_email, purpose, code)
 
 
 def hash_reset_token(token: str) -> str:
@@ -182,32 +420,59 @@ def hash_reset_token(token: str) -> str:
 
 
 def send_password_reset_link_email(to_email: str, reset_url: str) -> None:
+    """
+    Retained for compatibility with the older reset-link endpoints.
+    The current frontend uses the six-digit-code flow.
+    """
     resend_api_key = os.environ.get("RESEND_API_KEY", "").strip()
-    from_email = os.environ.get("FROM_EMAIL", "ZimLink <info@zimlink.me>").strip()
-    logo_url = os.environ.get("ZIMLINK_LOGO_URL", "https://zimlink.me/images/logo.png").strip()
+    from_email = os.environ.get(
+        "FROM_EMAIL",
+        "ZimLink <info@zimlink.me>",
+    ).strip()
 
     if not resend_api_key:
-        logger.warning("RESEND_API_KEY is missing. Password reset link was not sent.")
+        logger.warning(
+            "RESEND_API_KEY is missing. Password reset link was not sent."
+        )
         return
 
     resend.api_key = resend_api_key
-    html = f"""
-    <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;background:#fff;border:1px solid #e5e7eb;border-radius:18px;overflow:hidden">
-      <div style="background:#16a34a;padding:26px;text-align:center">
-        <img src="{logo_url}" alt="ZimLink" style="max-width:190px;max-height:60px;width:auto;height:auto" />
+    safe_reset_url = escape(reset_url, quote=True)
+
+    content_html = f"""
+      <p style="margin:0;font-size:15px;line-height:1.7;color:#52525b;">
+        We received a request to reset your ZimLink password. Use the button
+        below to create a new password.
+      </p>
+
+      <div style="text-align:center;margin:28px 0;">
+        <a
+          href="{safe_reset_url}"
+          style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:14px 24px;border-radius:10px;"
+        >
+          Reset password
+        </a>
       </div>
-      <div style="padding:32px 28px">
-        <h1 style="margin:0;font-size:25px;color:#111">Reset your ZimLink password</h1>
-        <p style="margin:14px 0 0;font-size:15px;line-height:1.6;color:#52525b">
-          We received a request to reset your password. This secure link expires in 30 minutes and can only be used once.
+
+      <div style="background:#fafafa;border:1px solid #eeeeee;border-radius:12px;padding:15px 16px;">
+        <p style="margin:0;font-size:13px;line-height:1.6;color:#71717a;">
+          This link expires in 30 minutes and can only be used once. If you did
+          not request this reset, you can safely ignore this email.
         </p>
-        <div style="text-align:center;margin:28px 0">
-          <a href="{reset_url}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;font-size:14px;font-weight:700;padding:14px 24px;border-radius:10px">Reset password</a>
-        </div>
-        <p style="font-size:13px;line-height:1.6;color:#71717a">If you did not request this, ignore this email.</p>
       </div>
-    </div>
     """
+
+    html = branded_email_template(
+        title="Reset your password",
+        preview_text="Use your secure link to reset your ZimLink password.",
+        content_html=content_html,
+        eyebrow="Password recovery",
+        footer_text=(
+            "This is an automated security email from ZimLink. "
+            "Please do not reply."
+        ),
+    )
+
     resend.Emails.send({
         "from": from_email,
         "to": [to_email],
@@ -246,9 +511,13 @@ def generate_qr_base64(data: str) -> str:
     return base64.b64encode(buffer.getvalue()).decode()
 
 
+
 def send_ticket_emails(tickets: list, event: dict, buyer: dict):
     resend_api_key = os.environ.get("RESEND_API_KEY", "").strip()
-    from_email = os.environ.get("FROM_EMAIL", "ZimLink <info@zimlink.me>").strip()
+    from_email = os.environ.get(
+        "FROM_EMAIL",
+        "ZimLink <info@zimlink.me>",
+    ).strip()
 
     if not resend_api_key:
         logger.warning("RESEND_API_KEY missing — ticket emails not sent")
@@ -256,54 +525,83 @@ def send_ticket_emails(tickets: list, event: dict, buyer: dict):
 
     resend.api_key = resend_api_key
 
+    safe_event_title = escape(str(event.get("title", "Event")))
+    safe_event_city = escape(str(event.get("city", "")))
+    safe_event_venue = escape(str(event.get("venue", "")))
+    safe_event_datetime = escape(str(event.get("date_time", "")))
+    safe_buyer_name = escape(str(buyer.get("name", "Guest")))
+
     for ticket in tickets:
         qr_b64 = generate_qr_base64(f"ZIMLINK-TICKET:{ticket['id']}")
+        safe_ticket_id = escape(str(ticket["id"]))
+        ticket_number = int(ticket.get("ticket_number", 1))
+        total_in_order = int(ticket.get("total_in_order", 1))
+        ticket_price = float(ticket.get("price", 0.0))
 
-        html = f"""
-        <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;background:#f9f9f9;border-radius:16px;overflow:hidden;border:1px solid #e5e5e5">
-          <div style="background:#16A34A;padding:28px;text-align:center">
-            <h1 style="color:#000;margin:0;font-size:26px;font-weight:600">ZimLink</h1>
-            <p style="color:rgba(0,0,0,0.65);margin:6px 0 0;font-size:13px">Your ticket is confirmed</p>
-          </div>
-          <div style="padding:28px">
-            <h2 style="font-size:22px;margin:0 0 4px;color:#111;font-weight:600">{event['title']}</h2>
-            <p style="color:#666;font-size:13px;margin:0 0 24px">{event['city']} · {event['venue']}</p>
-            <table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:24px">
-              <tr style="border-bottom:1px solid #eee">
-                <td style="padding:10px 0;color:#999;width:40%">Date & time</td>
-                <td style="color:#111;font-weight:500">{event['date_time']}</td>
-              </tr>
-              <tr style="border-bottom:1px solid #eee">
-                <td style="padding:10px 0;color:#999">Venue</td>
-                <td style="color:#111;font-weight:500">{event['venue']}, {event['city']}</td>
-              </tr>
-              <tr style="border-bottom:1px solid #eee">
-                <td style="padding:10px 0;color:#999">Ticket</td>
-                <td style="color:#111;font-weight:500">{ticket['ticket_number']} of {ticket['total_in_order']}</td>
-              </tr>
-              <tr style="border-bottom:1px solid #eee">
-                <td style="padding:10px 0;color:#999">Price</td>
-                <td style="color:#111;font-weight:500">${ticket['price']:.2f}</td>
-              </tr>
-              <tr style="border-bottom:1px solid #eee">
-                <td style="padding:10px 0;color:#999">Name</td>
-                <td style="color:#111;font-weight:500">{buyer['name']}</td>
-              </tr>
-              <tr>
-                <td style="padding:10px 0;color:#999">Ticket ID</td>
-                <td style="color:#111;font-family:monospace;font-size:11px">{ticket['id']}</td>
-              </tr>
-            </table>
-            <div style="text-align:center;background:#fff;border-radius:12px;padding:20px;border:1px solid #eee;margin-bottom:20px">
-              <img src="data:image/png;base64,{qr_b64}" alt="QR Code" style="width:160px;height:160px" />
-              <p style="color:#999;font-size:11px;margin:10px 0 0">Scan at the door to verify your ticket</p>
-            </div>
-            <p style="color:#bbb;font-size:11px;text-align:center;margin:0">
-              This ticket is non-transferable. Present at entry. Powered by ZimLink.
+        content_html = f"""
+          <p style="margin:0;font-size:15px;line-height:1.7;color:#52525b;">
+            Hi {safe_buyer_name}, your ticket is confirmed. Keep this email
+            available when you arrive at the event.
+          </p>
+
+          <div style="margin:24px 0;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:16px;padding:20px;">
+            <p style="margin:0 0 5px;font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#15803d;">
+              Event
+            </p>
+            <p style="margin:0;font-size:21px;line-height:1.35;font-weight:700;color:#111111;">
+              {safe_event_title}
+            </p>
+            <p style="margin:7px 0 0;font-size:13px;line-height:1.5;color:#52525b;">
+              {safe_event_city} · {safe_event_venue}
             </p>
           </div>
-        </div>
+
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;font-size:14px;border-collapse:collapse;">
+            <tr>
+              <td style="padding:12px 0;color:#71717a;border-bottom:1px solid #eeeeee;">Date and time</td>
+              <td align="right" style="padding:12px 0;color:#111111;font-weight:600;border-bottom:1px solid #eeeeee;">{safe_event_datetime}</td>
+            </tr>
+            <tr>
+              <td style="padding:12px 0;color:#71717a;border-bottom:1px solid #eeeeee;">Venue</td>
+              <td align="right" style="padding:12px 0;color:#111111;font-weight:600;border-bottom:1px solid #eeeeee;">{safe_event_venue}, {safe_event_city}</td>
+            </tr>
+            <tr>
+              <td style="padding:12px 0;color:#71717a;border-bottom:1px solid #eeeeee;">Ticket</td>
+              <td align="right" style="padding:12px 0;color:#111111;font-weight:600;border-bottom:1px solid #eeeeee;">{ticket_number} of {total_in_order}</td>
+            </tr>
+            <tr>
+              <td style="padding:12px 0;color:#71717a;border-bottom:1px solid #eeeeee;">Price</td>
+              <td align="right" style="padding:12px 0;color:#111111;font-weight:600;border-bottom:1px solid #eeeeee;">${ticket_price:.2f}</td>
+            </tr>
+            <tr>
+              <td style="padding:12px 0;color:#71717a;">Ticket ID</td>
+              <td align="right" style="padding:12px 0;color:#111111;font-family:monospace;font-size:11px;">{safe_ticket_id}</td>
+            </tr>
+          </table>
+
+          <div style="margin-top:24px;text-align:center;background:#fafafa;border:1px solid #eeeeee;border-radius:16px;padding:20px;">
+            <img
+              src="data:image/png;base64,{qr_b64}"
+              alt="Ticket QR code"
+              width="170"
+              style="display:block;width:170px;height:170px;margin:0 auto;border:0;"
+            />
+            <p style="margin:10px 0 0;font-size:11px;line-height:1.5;color:#71717a;">
+              Present this QR code at the entrance.
+            </p>
+          </div>
         """
+
+        html = branded_email_template(
+            title="Your ticket is confirmed",
+            preview_text=f"Your ticket for {event.get('title', 'the event')} is ready.",
+            content_html=content_html,
+            eyebrow="Event confirmation",
+            footer_text=(
+                "This ticket is non-transferable. Present it at entry. "
+                "Powered by ZimLink."
+            ),
+        )
 
         try:
             resend.Emails.send({
@@ -312,13 +610,16 @@ def send_ticket_emails(tickets: list, event: dict, buyer: dict):
                 "subject": f"Your ticket for {event['title']}",
                 "html": html,
             })
-
-            logger.info(f"Ticket email sent to {buyer['email']}")
-
-        except Exception as e:
+            logger.info("Ticket email sent to %s", buyer["email"])
+        except Exception:
             logger.exception("Ticket email failed")
 
-        logger.info(f"Ticket {ticket['id']} emailed to {buyer['email']}")
+        logger.info(
+            "Ticket %s emailed to %s",
+            ticket["id"],
+            buyer["email"],
+        )
+
 
 
 def send_topup_completed_email(
@@ -331,23 +632,15 @@ def send_topup_completed_email(
 ) -> Optional[str]:
     """
     Send a branded wallet top-up confirmation through Resend.
-
-    Returns the Resend email ID when available. Email failures are logged and
-    raised so the database can mark the notification as failed without
-    affecting the completed Stripe payment or wallet balance.
     """
     resend_api_key = os.environ.get("RESEND_API_KEY", "").strip()
     from_email = os.environ.get(
         "FROM_EMAIL",
         "ZimLink <info@zimlink.me>",
     ).strip()
-    logo_url = os.environ.get(
-        "ZIMLINK_LOGO_URL",
-        "https://zimlink.me/images/zimlink-email-logo.png",
-    ).strip()
     frontend_url = os.environ.get(
         "FRONTEND_URL",
-        "https://zimlink.me",
+        "https://www.zimlink.me",
     ).strip().rstrip("/")
 
     if not resend_api_key:
@@ -359,103 +652,62 @@ def send_topup_completed_email(
     safe_email = escape(to_email)
     safe_transaction_id = escape(transaction_id)
     safe_completed_at = escape(completed_at)
-    safe_logo_url = escape(logo_url, quote=True)
     wallet_url = escape(f"{frontend_url}/wallet", quote=True)
 
-    html = f"""
-    <!doctype html>
-    <html>
-      <body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;color:#111111;">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f4f5;padding:28px 12px;">
-          <tr>
-            <td align="center">
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0"
-                     style="max-width:560px;background:#ffffff;border:1px solid #e5e7eb;border-radius:18px;overflow:hidden;">
-                <tr>
-                  <td align="center" style="background:#16a34a;padding:28px 24px;">
-                    <img src="{safe_logo_url}" alt="ZimLink"
-                         style="display:block;max-width:190px;max-height:58px;width:auto;height:auto;border:0;" />
-                  </td>
-                </tr>
+    content_html = f"""
+      <p style="margin:0;font-size:15px;line-height:1.7;color:#52525b;">
+        Hi {safe_name}, your payment was confirmed and your funds are now
+        available in your ZimLink wallet.
+      </p>
 
-                <tr>
-                  <td style="padding:32px 28px 12px;">
-                    <p style="margin:0 0 10px;font-size:15px;color:#52525b;">Hi {safe_name},</p>
-                    <h1 style="margin:0;font-size:26px;line-height:1.25;font-weight:700;color:#111111;">
-                      Your wallet top-up is complete
-                    </h1>
-                    <p style="margin:12px 0 0;font-size:15px;line-height:1.6;color:#52525b;">
-                      Your payment was confirmed and the funds are now available in your ZimLink wallet.
-                    </p>
-                  </td>
-                </tr>
+      <div style="margin:24px 0;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:16px;padding:23px;text-align:center;">
+        <p style="margin:0 0 7px;font-size:11px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:#15803d;">
+          Amount added
+        </p>
+        <p style="margin:0;font-size:42px;line-height:1.1;font-weight:700;color:#111111;">
+          ${amount:.2f}
+        </p>
+      </div>
 
-                <tr>
-                  <td style="padding:16px 28px;">
-                    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:14px;padding:22px;text-align:center;">
-                      <p style="margin:0 0 6px;font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#15803d;">
-                        Amount added
-                      </p>
-                      <p style="margin:0;font-size:40px;line-height:1.1;font-weight:700;color:#111111;">
-                        ${amount:.2f}
-                      </p>
-                    </div>
-                  </td>
-                </tr>
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;font-size:14px;border-collapse:collapse;">
+        <tr>
+          <td style="padding:12px 0;color:#71717a;border-bottom:1px solid #eeeeee;">New wallet balance</td>
+          <td align="right" style="padding:12px 0;font-weight:700;color:#111111;border-bottom:1px solid #eeeeee;">${new_balance:.2f}</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 0;color:#71717a;border-bottom:1px solid #eeeeee;">Transaction reference</td>
+          <td align="right" style="padding:12px 0;font-family:monospace;font-size:11px;color:#111111;border-bottom:1px solid #eeeeee;">{safe_transaction_id}</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 0;color:#71717a;border-bottom:1px solid #eeeeee;">Completed</td>
+          <td align="right" style="padding:12px 0;color:#111111;border-bottom:1px solid #eeeeee;">{safe_completed_at}</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 0;color:#71717a;">Account</td>
+          <td align="right" style="padding:12px 0;color:#111111;">{safe_email}</td>
+        </tr>
+      </table>
 
-                <tr>
-                  <td style="padding:4px 28px 24px;">
-                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0"
-                           style="font-size:14px;border-collapse:collapse;">
-                      <tr>
-                        <td style="padding:12px 0;color:#71717a;border-bottom:1px solid #eeeeee;">New wallet balance</td>
-                        <td align="right" style="padding:12px 0;font-weight:700;color:#111111;border-bottom:1px solid #eeeeee;">
-                          ${new_balance:.2f}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td style="padding:12px 0;color:#71717a;border-bottom:1px solid #eeeeee;">Transaction reference</td>
-                        <td align="right" style="padding:12px 0;font-family:monospace;font-size:12px;color:#111111;border-bottom:1px solid #eeeeee;">
-                          {safe_transaction_id}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td style="padding:12px 0;color:#71717a;border-bottom:1px solid #eeeeee;">Completed</td>
-                        <td align="right" style="padding:12px 0;color:#111111;border-bottom:1px solid #eeeeee;">
-                          {safe_completed_at}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td style="padding:12px 0;color:#71717a;">Account</td>
-                        <td align="right" style="padding:12px 0;color:#111111;">{safe_email}</td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-
-                <tr>
-                  <td align="center" style="padding:0 28px 32px;">
-                    <a href="{wallet_url}"
-                       style="display:inline-block;background:#111111;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:14px 24px;border-radius:10px;">
-                      View your wallet
-                    </a>
-                  </td>
-                </tr>
-
-                <tr>
-                  <td style="background:#fafafa;border-top:1px solid #eeeeee;padding:20px 28px;text-align:center;">
-                    <p style="margin:0;font-size:11px;line-height:1.5;color:#a1a1aa;">
-                      This is an automatic payment notification from ZimLink. Please do not reply to this email.
-                    </p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-        </table>
-      </body>
-    </html>
+      <div style="text-align:center;margin-top:28px;">
+        <a
+          href="{wallet_url}"
+          style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:14px 24px;border-radius:10px;"
+        >
+          View your wallet
+        </a>
+      </div>
     """
+
+    html = branded_email_template(
+        title="Your wallet top-up is complete",
+        preview_text=f"${amount:.2f} has been added to your ZimLink wallet.",
+        content_html=content_html,
+        eyebrow="Payment confirmation",
+        footer_text=(
+            "This is an automatic payment notification from ZimLink. "
+            "Please do not reply."
+        ),
+    )
 
     response = resend.Emails.send({
         "from": from_email,
@@ -466,6 +718,7 @@ def send_topup_completed_email(
 
     if isinstance(response, dict):
         return response.get("id")
+
     return getattr(response, "id", None)
 
 
@@ -2079,38 +2332,91 @@ async def confirm_delete_account(data: DeleteAccountIn, current=Depends(get_curr
 
 
 @api.post("/support/message")
-async def send_support_message(data: SupportMessageIn, current=Depends(get_current_user)):
+async def send_support_message(
+    data: SupportMessageIn,
+    current=Depends(get_current_user),
+):
     resend_api_key = os.environ.get("RESEND_API_KEY", "").strip()
-    from_email = os.environ.get("FROM_EMAIL", "ZimLink <info@zimlink.me>").strip()
+    from_email = os.environ.get(
+        "FROM_EMAIL",
+        "ZimLink <info@zimlink.me>",
+    ).strip()
 
     if not resend_api_key:
-        raise HTTPException(status_code=500, detail="Support email not configured")
+        raise HTTPException(
+            status_code=500,
+            detail="Support email not configured",
+        )
 
     resend.api_key = resend_api_key
 
-    html = f"""
-    <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto">
-      <h2>New Support Message</h2>
-      <p><strong>From:</strong> {current['name']} ({current['email']})</p>
-      <p><strong>User ID:</strong> {current['id']}</p>
-      <hr/>
-      <p>{data.message.replace(chr(10), '<br/>')}</p>
-    </div>
+    safe_name = escape(str(current.get("name", "User")))
+    safe_email = escape(str(current.get("email", "")))
+    safe_user_id = escape(str(current.get("id", "")))
+    safe_message = escape(data.message).replace("\n", "<br/>")
+
+    content_html = f"""
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:14px;padding:18px;margin-bottom:22px;">
+        <p style="margin:0 0 5px;font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#15803d;">
+          Submitted by
+        </p>
+        <p style="margin:0;font-size:17px;font-weight:700;color:#111111;">
+          {safe_name}
+        </p>
+        <p style="margin:5px 0 0;font-size:13px;color:#52525b;">
+          {safe_email}
+        </p>
+      </div>
+
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;font-size:14px;border-collapse:collapse;margin-bottom:22px;">
+        <tr>
+          <td style="padding:11px 0;color:#71717a;border-bottom:1px solid #eeeeee;">User ID</td>
+          <td align="right" style="padding:11px 0;color:#111111;font-family:monospace;font-size:11px;border-bottom:1px solid #eeeeee;">{safe_user_id}</td>
+        </tr>
+        <tr>
+          <td style="padding:11px 0;color:#71717a;">Reply email</td>
+          <td align="right" style="padding:11px 0;color:#111111;">{safe_email}</td>
+        </tr>
+      </table>
+
+      <div style="background:#fafafa;border:1px solid #eeeeee;border-radius:14px;padding:18px;">
+        <p style="margin:0 0 9px;font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#71717a;">
+          Message
+        </p>
+        <p style="margin:0;font-size:14px;line-height:1.7;color:#27272a;">
+          {safe_message}
+        </p>
+      </div>
     """
+
+    html = branded_email_template(
+        title="New support message",
+        preview_text=f"New support request from {current.get('name', 'a ZimLink user')}.",
+        content_html=content_html,
+        eyebrow="Customer support",
+        footer_text="This message was submitted through the ZimLink application.",
+    )
 
     try:
         resend.Emails.send({
             "from": from_email,
             "to": ["info@zimlink.me"],
             "reply_to": current["email"],
-            "subject": f"Support: {current['name']} — {data.message[:60]}...",
+            "subject": (
+                f"Support: {current['name']} — "
+                f"{data.message[:60]}..."
+            ),
             "html": html,
         })
-        logger.info(f"Support message from {current['email']}")
+        logger.info("Support message from %s", current["email"])
         return {"ok": True, "message": "Message sent"}
-    except Exception as e:
-        logger.error(f"Support email failed: {e}")
-        raise HTTPException(status_code=500, detail="Could not send message")
+    except Exception as exc:
+        logger.error("Support email failed: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail="Could not send message",
+        )
+
 
 # ----- CORS & App startup -----
 app.add_middleware(
