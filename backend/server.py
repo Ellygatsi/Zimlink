@@ -2596,10 +2596,21 @@ async def on_startup():
     await db.password_reset_tokens.create_index("expires_at")
     await db.contacts.create_index([("user_id", 1), ("created_at", -1)])
     await db.contacts.create_index([("user_id", 1), ("number", 1)])
+    # Clean explicit null values from legacy call records.
+    await db.calls.update_many(
+        {"call_session_id": None},
+        {"$unset": {"call_session_id": ""}},
+    )
+
+    # Only records with a real string session ID participate in this unique
+    # index. Legacy calls without a session ID remain valid and deploy safely.
     await db.calls.create_index(
         [("user_id", 1), ("call_session_id", 1)],
+        name="unique_user_call_session",
         unique=True,
-        sparse=True,
+        partialFilterExpression={
+            "call_session_id": {"$type": "string"},
+        },
     )
     await db.calls.create_index(
         [("user_id", 1), ("started_at", -1)]
