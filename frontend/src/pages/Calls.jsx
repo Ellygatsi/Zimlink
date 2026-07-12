@@ -97,10 +97,13 @@ export default function Calls() {
   const loadContacts = async () => {
     try {
       const { data } = await api.get("/voice/contacts");
-      setContacts(data);
-    } catch (_e) {
-      // Contacts endpoint may not exist yet on the backend — fail quietly.
+      setContacts(Array.isArray(data) ? data : []);
+    } catch (err) {
       setContacts([]);
+      console.error(
+        "Could not load contacts:",
+        err?.response?.data?.detail || err
+      );
     }
   };
 
@@ -344,27 +347,73 @@ export default function Calls() {
     }
   };
 
-  // --- New: Contacts ---
+  // --- Contacts ---
+  const normalizeContactNumber = (value) => {
+    const trimmed = (value || "").trim();
+
+    if (trimmed.startsWith("+")) {
+      return `+${trimmed.slice(1).replace(/\D/g, "")}`;
+    }
+
+    return trimmed.replace(/\D/g, "");
+  };
+
   const handleAddContact = async (e) => {
     e.preventDefault();
 
     const name = newContactName.trim();
-    const num = newContactNumber.trim();
+    const num = normalizeContactNumber(newContactNumber);
+
+    if (!name) {
+      toast.error("Enter the contact's name.");
+      return;
+    }
 
     if (!num.startsWith("+")) {
-      toast.error("Use international format, for example +26377XXXXXXX.");
+      toast.error("Use international format, for example +263770000000.");
+      return;
+    }
+
+    if (num.length < 8) {
+      toast.error("Enter a valid international phone number.");
       return;
     }
 
     setAddingContact(true);
+
     try {
-      await api.post("/voice/contacts", { name, number: num });
+      const { data } = await api.post("/voice/contacts", {
+        name,
+        number: num,
+      });
+
       toast.success("Contact added.");
       setNewContactName("");
       setNewContactNumber("");
-      loadContacts();
-    } catch (_err) {
-      toast.error("Could not add contact.");
+
+      if (data?.id) {
+        setContacts((current) => [
+          data,
+          ...current.filter((contact) => contact.id !== data.id),
+        ]);
+      }
+
+      await loadContacts();
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      const statusCode = err?.response?.status;
+
+      if (statusCode === 401) {
+        toast.error("Your session has expired. Please sign in again.");
+      } else if (typeof detail === "string" && detail) {
+        toast.error(detail);
+      } else if (!err?.response) {
+        toast.error("Could not reach the server. Check your connection.");
+      } else {
+        toast.error("Could not add contact.");
+      }
+
+      console.error("Add contact failed:", err);
     } finally {
       setAddingContact(false);
     }
@@ -382,17 +431,41 @@ export default function Calls() {
       const selected = await navigator.contacts.select(["name", "tel"], { multiple: true });
 
       let importedCount = 0;
+      let skippedCount = 0;
+
       for (const c of selected) {
-        const name = c.name?.[0] || "";
-        const tel = c.tel?.[0] || "";
-        if (tel) {
-          await api.post("/voice/contacts", { name, number: tel }).catch(() => {});
+        const name = c.name?.[0]?.trim() || "Unnamed contact";
+        const tel = normalizeContactNumber(c.tel?.[0] || "");
+
+        if (!tel.startsWith("+")) {
+          skippedCount += 1;
+          continue;
+        }
+
+        try {
+          await api.post("/voice/contacts", {
+            name,
+            number: tel,
+          });
           importedCount += 1;
+        } catch (_err) {
+          skippedCount += 1;
         }
       }
 
-      toast.success(`Imported ${importedCount} contact${importedCount === 1 ? "" : "s"}.`);
-      loadContacts();
+      if (importedCount > 0) {
+        toast.success(
+          `Imported ${importedCount} contact${importedCount === 1 ? "" : "s"}.`
+        );
+      }
+
+      if (skippedCount > 0) {
+        toast.error(
+          `${skippedCount} contact${skippedCount === 1 ? " was" : "s were"} skipped. Numbers must include a country code.`
+        );
+      }
+
+      await loadContacts();
     } catch (_err) {
       toast.error("Could not import contacts.");
     }
