@@ -6,6 +6,7 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
+import ResetPassword from "@/pages/ResetPassword";
 import Home from "@/pages/Home";
 import Calls from "@/pages/Calls";
 import WalletPage from "@/pages/Wallet";
@@ -19,9 +20,9 @@ import AdminRates from "@/pages/AdminRates";
 import AdminSettings from "@/pages/AdminSettings";
 import AdminUsers from "@/pages/AdminUsers";
 import AdminGuard from "@/components/AdminGuard";
-import "@/App.css";
 import TicketSuccess from "@/pages/TicketSuccess";
 import Profile from "@/pages/Profile";
+import "@/App.css";
 
 function Protected({ children }) {
   return (
@@ -60,26 +61,135 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
 
             <Route path="/" element={<Navigate to="/home" replace />} />
-            <Route path="/home" element={<Protected><Home /></Protected>} />
-            <Route path="/calls" element={<Protected><Calls /></Protected>} />
-            <Route path="/wallet" element={<Protected><WalletPage /></Protected>} />
 
-            <Route path="/marketplace" element={<Protected><Marketplace /></Protected>} />
-            <Route path="/marketplace/:id" element={<Protected><MarketplaceDetail /></Protected>} />
+            <Route
+              path="/home"
+              element={
+                <Protected>
+                  <Home />
+                </Protected>
+              }
+            />
 
-            <Route path="/events" element={<Protected><Events /></Protected>} />
-            <Route path="/events/:id" element={<Protected><EventDetail /></Protected>} />
+            <Route
+              path="/calls"
+              element={
+                <Protected>
+                  <Calls />
+                </Protected>
+              }
+            />
 
-            <Route path="/community" element={<Protected><Community /></Protected>} />
+            <Route
+              path="/wallet"
+              element={
+                <Protected>
+                  <WalletPage />
+                </Protected>
+              }
+            />
 
-            <Route path="/admin" element={<AdminProtected><AdminDashboard /></AdminProtected>} />
-            <Route path="/admin/users" element={<AdminProtected><AdminUsers /></AdminProtected>} />
-            <Route path="/admin/rates" element={<AdminProtected><AdminRates /></AdminProtected>} />
-            <Route path="/admin/settings" element={<AdminProtected><AdminSettings /></AdminProtected>} />
-            <Route path="/tickets/success" element={<Protected><TicketSuccess /></Protected>} />
-            <Route path="/profile" element={<Protected><Profile /></Protected>} />
+            <Route
+              path="/marketplace"
+              element={
+                <Protected>
+                  <Marketplace />
+                </Protected>
+              }
+            />
+
+            <Route
+              path="/marketplace/:id"
+              element={
+                <Protected>
+                  <MarketplaceDetail />
+                </Protected>
+              }
+            />
+
+            <Route
+              path="/events"
+              element={
+                <Protected>
+                  <Events />
+                </Protected>
+              }
+            />
+
+            <Route
+              path="/events/:id"
+              element={
+                <Protected>
+                  <EventDetail />
+                </Protected>
+              }
+            />
+
+            <Route
+              path="/community"
+              element={
+                <Protected>
+                  <Community />
+                </Protected>
+              }
+            />
+
+            <Route
+              path="/tickets/success"
+              element={
+                <Protected>
+                  <TicketSuccess />
+                </Protected>
+              }
+            />
+
+            <Route
+              path="/profile"
+              element={
+                <Protected>
+                  <Profile />
+                </Protected>
+              }
+            />
+
+            <Route
+              path="/admin"
+              element={
+                <AdminProtected>
+                  <AdminDashboard />
+                </AdminProtected>
+              }
+            />
+
+            <Route
+              path="/admin/users"
+              element={
+                <AdminProtected>
+                  <AdminUsers />
+                </AdminProtected>
+              }
+            />
+
+            <Route
+              path="/admin/rates"
+              element={
+                <AdminProtected>
+                  <AdminRates />
+                </AdminProtected>
+              }
+            />
+
+            <Route
+              path="/admin/settings"
+              element={
+                <AdminProtected>
+                  <AdminSettings />
+                </AdminProtected>
+              }
+            />
 
             <Route path="*" element={<Navigate to="/home" replace />} />
           </Routes>

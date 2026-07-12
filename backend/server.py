@@ -10,9 +10,12 @@ import logging
 import bcrypt
 import jwt as pyjwt
 import random
+import secrets
+import hashlib
 import resend
 import smtplib
 from email.message import EmailMessage
+from html import escape
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Literal
 import qrcode
@@ -174,6 +177,45 @@ def send_email_code(to_email: str, code: str, purpose: str) -> None:
         logger.warning(f"EMAIL CODE for {to_email} ({purpose}): {code}")
 
 
+def hash_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def send_password_reset_link_email(to_email: str, reset_url: str) -> None:
+    resend_api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    from_email = os.environ.get("FROM_EMAIL", "ZimLink <info@zimlink.me>").strip()
+    logo_url = os.environ.get("ZIMLINK_LOGO_URL", "https://zimlink.me/images/logo.png").strip()
+
+    if not resend_api_key:
+        logger.warning("RESEND_API_KEY is missing. Password reset link was not sent.")
+        return
+
+    resend.api_key = resend_api_key
+    html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;background:#fff;border:1px solid #e5e7eb;border-radius:18px;overflow:hidden">
+      <div style="background:#16a34a;padding:26px;text-align:center">
+        <img src="{logo_url}" alt="ZimLink" style="max-width:190px;max-height:60px;width:auto;height:auto" />
+      </div>
+      <div style="padding:32px 28px">
+        <h1 style="margin:0;font-size:25px;color:#111">Reset your ZimLink password</h1>
+        <p style="margin:14px 0 0;font-size:15px;line-height:1.6;color:#52525b">
+          We received a request to reset your password. This secure link expires in 30 minutes and can only be used once.
+        </p>
+        <div style="text-align:center;margin:28px 0">
+          <a href="{reset_url}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;font-size:14px;font-weight:700;padding:14px 24px;border-radius:10px">Reset password</a>
+        </div>
+        <p style="font-size:13px;line-height:1.6;color:#71717a">If you did not request this, ignore this email.</p>
+      </div>
+    </div>
+    """
+    resend.Emails.send({
+        "from": from_email,
+        "to": [to_email],
+        "subject": "Reset your ZimLink password",
+        "html": html,
+    })
+
+
 async def get_rate_for_number(to_number: str) -> dict:
     to_number = (to_number or "").strip()
     if to_number and not to_number.startswith("+"):
@@ -279,6 +321,239 @@ def send_ticket_emails(tickets: list, event: dict, buyer: dict):
         logger.info(f"Ticket {ticket['id']} emailed to {buyer['email']}")
 
 
+def send_topup_completed_email(
+    to_email: str,
+    customer_name: str,
+    amount: float,
+    new_balance: float,
+    transaction_id: str,
+    completed_at: str,
+) -> Optional[str]:
+    """
+    Send a branded wallet top-up confirmation through Resend.
+
+    Returns the Resend email ID when available. Email failures are logged and
+    raised so the database can mark the notification as failed without
+    affecting the completed Stripe payment or wallet balance.
+    """
+    resend_api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    from_email = os.environ.get(
+        "FROM_EMAIL",
+        "ZimLink <info@zimlink.me>",
+    ).strip()
+    logo_url = os.environ.get(
+        "ZIMLINK_LOGO_URL",
+        "https://zimlink.me/images/zimlink-email-logo.png",
+    ).strip()
+    frontend_url = os.environ.get(
+        "FRONTEND_URL",
+        "https://zimlink.me",
+    ).strip().rstrip("/")
+
+    if not resend_api_key:
+        raise RuntimeError("RESEND_API_KEY is missing")
+
+    resend.api_key = resend_api_key
+
+    safe_name = escape((customer_name or "there").strip())
+    safe_email = escape(to_email)
+    safe_transaction_id = escape(transaction_id)
+    safe_completed_at = escape(completed_at)
+    safe_logo_url = escape(logo_url, quote=True)
+    wallet_url = escape(f"{frontend_url}/wallet", quote=True)
+
+    html = f"""
+    <!doctype html>
+    <html>
+      <body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;color:#111111;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f4f5;padding:28px 12px;">
+          <tr>
+            <td align="center">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0"
+                     style="max-width:560px;background:#ffffff;border:1px solid #e5e7eb;border-radius:18px;overflow:hidden;">
+                <tr>
+                  <td align="center" style="background:#16a34a;padding:28px 24px;">
+                    <img src="{safe_logo_url}" alt="ZimLink"
+                         style="display:block;max-width:190px;max-height:58px;width:auto;height:auto;border:0;" />
+                  </td>
+                </tr>
+
+                <tr>
+                  <td style="padding:32px 28px 12px;">
+                    <p style="margin:0 0 10px;font-size:15px;color:#52525b;">Hi {safe_name},</p>
+                    <h1 style="margin:0;font-size:26px;line-height:1.25;font-weight:700;color:#111111;">
+                      Your wallet top-up is complete
+                    </h1>
+                    <p style="margin:12px 0 0;font-size:15px;line-height:1.6;color:#52525b;">
+                      Your payment was confirmed and the funds are now available in your ZimLink wallet.
+                    </p>
+                  </td>
+                </tr>
+
+                <tr>
+                  <td style="padding:16px 28px;">
+                    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:14px;padding:22px;text-align:center;">
+                      <p style="margin:0 0 6px;font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#15803d;">
+                        Amount added
+                      </p>
+                      <p style="margin:0;font-size:40px;line-height:1.1;font-weight:700;color:#111111;">
+                        ${amount:.2f}
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+
+                <tr>
+                  <td style="padding:4px 28px 24px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0"
+                           style="font-size:14px;border-collapse:collapse;">
+                      <tr>
+                        <td style="padding:12px 0;color:#71717a;border-bottom:1px solid #eeeeee;">New wallet balance</td>
+                        <td align="right" style="padding:12px 0;font-weight:700;color:#111111;border-bottom:1px solid #eeeeee;">
+                          ${new_balance:.2f}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style="padding:12px 0;color:#71717a;border-bottom:1px solid #eeeeee;">Transaction reference</td>
+                        <td align="right" style="padding:12px 0;font-family:monospace;font-size:12px;color:#111111;border-bottom:1px solid #eeeeee;">
+                          {safe_transaction_id}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style="padding:12px 0;color:#71717a;border-bottom:1px solid #eeeeee;">Completed</td>
+                        <td align="right" style="padding:12px 0;color:#111111;border-bottom:1px solid #eeeeee;">
+                          {safe_completed_at}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style="padding:12px 0;color:#71717a;">Account</td>
+                        <td align="right" style="padding:12px 0;color:#111111;">{safe_email}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+
+                <tr>
+                  <td align="center" style="padding:0 28px 32px;">
+                    <a href="{wallet_url}"
+                       style="display:inline-block;background:#111111;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:14px 24px;border-radius:10px;">
+                      View your wallet
+                    </a>
+                  </td>
+                </tr>
+
+                <tr>
+                  <td style="background:#fafafa;border-top:1px solid #eeeeee;padding:20px 28px;text-align:center;">
+                    <p style="margin:0;font-size:11px;line-height:1.5;color:#a1a1aa;">
+                      This is an automatic payment notification from ZimLink. Please do not reply to this email.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+    </html>
+    """
+
+    response = resend.Emails.send({
+        "from": from_email,
+        "to": [to_email],
+        "subject": f"ZimLink top-up complete — ${amount:.2f} added",
+        "html": html,
+    })
+
+    if isinstance(response, dict):
+        return response.get("id")
+    return getattr(response, "id", None)
+
+
+async def ensure_topup_completed_email(tx: dict) -> None:
+    """
+    Claim and send one top-up email per Stripe session.
+
+    Both the wallet status endpoint and Stripe webhook can process the same
+    checkout. The atomic claim prevents them from sending duplicate emails.
+    A failed email can be retried by a later status check or webhook delivery.
+    """
+    session_id = tx.get("session_id")
+    if not session_id or tx.get("payment_status") != "paid":
+        return
+
+    claim = await db.payment_transactions.update_one(
+        {
+            "session_id": session_id,
+            "payment_status": "paid",
+            "topup_email_status": {"$nin": ["sending", "sent"]},
+        },
+        {
+            "$set": {
+                "topup_email_status": "sending",
+                "topup_email_attempted_at": now_iso(),
+            }
+        },
+    )
+
+    if claim.modified_count != 1:
+        return
+
+    try:
+        user = await db.users.find_one(
+            {"id": tx["user_id"]},
+            {
+                "_id": 0,
+                "name": 1,
+                "email": 1,
+                "wallet_balance": 1,
+            },
+        )
+        if not user or not user.get("email"):
+            raise RuntimeError("Top-up user or email address was not found")
+
+        completed_at = tx.get("completed_at") or now_iso()
+        resend_email_id = send_topup_completed_email(
+            to_email=user["email"],
+            customer_name=user.get("name", "there"),
+            amount=float(tx.get("credited_amount", 0.0)),
+            new_balance=float(user.get("wallet_balance", 0.0)),
+            transaction_id=tx.get("id") or session_id,
+            completed_at=completed_at,
+        )
+
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {
+                "$set": {
+                    "topup_email_status": "sent",
+                    "topup_email_sent_at": now_iso(),
+                    "topup_email_resend_id": resend_email_id,
+                },
+                "$unset": {"topup_email_error": ""},
+            },
+        )
+        logger.info(
+            "Top-up confirmation email sent to %s for session %s",
+            user["email"],
+            session_id,
+        )
+    except Exception as exc:
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {
+                "$set": {
+                    "topup_email_status": "failed",
+                    "topup_email_error": str(exc)[:500],
+                }
+            },
+        )
+        # The payment and wallet credit remain successful even if email fails.
+        logger.exception(
+            "Top-up confirmation email failed for Stripe session %s",
+            session_id,
+        )
+
+
 # ----- Models -----
 class RegisterIn(BaseModel):
     email: EmailStr
@@ -305,6 +580,13 @@ class PasswordResetRequestIn(BaseModel):
 class PasswordResetConfirmIn(BaseModel):
     email: EmailStr
     code: str = Field(min_length=6, max_length=6)
+    new_password: str = Field(min_length=6)
+
+class PasswordResetLinkRequestIn(BaseModel):
+    email: EmailStr
+
+class PasswordResetLinkConfirmIn(BaseModel):
+    token: str = Field(min_length=32)
     new_password: str = Field(min_length=6)
 
 class SendMoneyIn(BaseModel):
@@ -479,6 +761,91 @@ async def confirm_password_reset(data: PasswordResetConfirmIn):
     await db.verification_codes.delete_many({"email": email, "purpose": "password_reset"})
 
     return {"ok": True, "message": "Password reset successful"}
+
+
+@api.post("/auth/password-reset/request-link")
+async def request_password_reset_link(data: PasswordResetLinkRequestIn):
+    email = data.email.lower().strip()
+    user = await db.users.find_one({"email": email}, {"_id": 0, "id": 1, "email": 1})
+
+    if user:
+        raw_token = secrets.token_urlsafe(48)
+        token_hash = hash_reset_token(raw_token)
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+
+        await db.password_reset_tokens.update_many(
+            {"user_id": user["id"], "used_at": None},
+            {"$set": {"invalidated_at": now_iso()}},
+        )
+
+        await db.password_reset_tokens.insert_one({
+            "id": new_id(),
+            "user_id": user["id"],
+            "email": email,
+            "token_hash": token_hash,
+            "expires_at": expires_at,
+            "used_at": None,
+            "invalidated_at": None,
+            "created_at": now_iso(),
+        })
+
+        frontend_url = os.environ.get("FRONTEND_URL", "https://zimlink.me").strip().rstrip("/")
+        reset_url = f"{frontend_url}/reset-password?token={raw_token}"
+
+        try:
+            send_password_reset_link_email(email, reset_url)
+        except Exception as exc:
+            logger.exception("Could not send password reset link to %s: %s", email, exc)
+
+    return {
+        "ok": True,
+        "message": "If an account exists for this email, a reset link has been sent.",
+    }
+
+
+@api.post("/auth/password-reset/confirm-link")
+async def confirm_password_reset_link(data: PasswordResetLinkConfirmIn):
+    token_hash = hash_reset_token(data.token)
+    record = await db.password_reset_tokens.find_one({
+        "token_hash": token_hash,
+        "used_at": None,
+        "invalidated_at": None,
+    })
+
+    if not record:
+        raise HTTPException(status_code=400, detail="This password reset link is invalid or has already been used.")
+
+    try:
+        expires_at = datetime.fromisoformat(record["expires_at"])
+    except Exception:
+        expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+    if expires_at < datetime.now(timezone.utc):
+        await db.password_reset_tokens.update_one(
+            {"id": record["id"]},
+            {"$set": {"invalidated_at": now_iso()}},
+        )
+        raise HTTPException(status_code=400, detail="This password reset link has expired. Request a new one.")
+
+    claim = await db.password_reset_tokens.update_one(
+        {"id": record["id"], "used_at": None, "invalidated_at": None},
+        {"$set": {"used_at": now_iso()}},
+    )
+    if claim.modified_count != 1:
+        raise HTTPException(status_code=400, detail="This password reset link has already been used.")
+
+    result = await db.users.update_one(
+        {"id": record["user_id"]},
+        {"$set": {"password_hash": hash_password(data.new_password), "updated_at": now_iso()}},
+    )
+    if result.matched_count != 1:
+        raise HTTPException(status_code=404, detail="User account not found.")
+
+    await db.password_reset_tokens.update_many(
+        {"user_id": record["user_id"], "used_at": None},
+        {"$set": {"invalidated_at": now_iso()}},
+    )
+    return {"ok": True, "message": "Password reset successful."}
 
 
 @api.post("/auth/logout")
@@ -660,6 +1027,9 @@ async def create_topup_checkout(data: TopUpRequest, current=Depends(get_current_
         "payment_status": "unpaid",
         "created_at": now_iso(),
         "completed_at": None,
+        "topup_email_status": "pending",
+        "topup_email_attempted_at": None,
+        "topup_email_sent_at": None,
     }
     await db.payment_transactions.insert_one(tx)
 
@@ -675,8 +1045,16 @@ async def _process_completed_payment(session_id: str) -> dict:
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
 
+    # A webhook and the browser status poll can reach this function at nearly
+    # the same time. If payment was already processed, do not credit again,
+    # but still retry a notification that was never sent.
     if tx.get("payment_status") == "paid":
-        return tx
+        await ensure_topup_completed_email(tx)
+        latest = await db.payment_transactions.find_one(
+            {"session_id": session_id},
+            {"_id": 0},
+        )
+        return latest or tx
 
     try:
         session = stripe.checkout.Session.retrieve(session_id)
@@ -685,13 +1063,17 @@ async def _process_completed_payment(session_id: str) -> dict:
         raise HTTPException(status_code=502, detail="Could not verify payment status")
 
     if session.payment_status == "paid":
+        completed_at = now_iso()
+
         result = await db.payment_transactions.update_one(
             {"session_id": session_id, "payment_status": {"$ne": "paid"}},
-            {"$set": {
-                "status": "completed",
-                "payment_status": "paid",
-                "completed_at": now_iso(),
-            }},
+            {
+                "$set": {
+                    "status": "completed",
+                    "payment_status": "paid",
+                    "completed_at": completed_at,
+                }
+            },
         )
 
         if result.modified_count == 1:
@@ -701,7 +1083,19 @@ async def _process_completed_payment(session_id: str) -> dict:
             )
             tx["status"] = "completed"
             tx["payment_status"] = "paid"
-            tx["completed_at"] = now_iso()
+            tx["completed_at"] = completed_at
+
+            # Email errors are handled internally and never reverse or block
+            # a successfully credited wallet top-up.
+            await ensure_topup_completed_email(tx)
+        else:
+            # Another request completed the transaction first. Reload it and
+            # let the email claim logic determine whether a message is needed.
+            tx = await db.payment_transactions.find_one(
+                {"session_id": session_id},
+                {"_id": 0},
+            ) or tx
+            await ensure_topup_completed_email(tx)
 
     elif getattr(session, "status", None) == "expired":
         await db.payment_transactions.update_one(
@@ -710,7 +1104,11 @@ async def _process_completed_payment(session_id: str) -> dict:
         )
         tx["status"] = "expired"
 
-    return tx
+    latest = await db.payment_transactions.find_one(
+        {"session_id": session_id},
+        {"_id": 0},
+    )
+    return latest or tx
 
 
 @api.get("/wallet/topup/status/{session_id}")
@@ -1739,8 +2137,13 @@ async def on_startup():
     await db.call_rates.create_index("prefix", unique=True)
     await db.verification_codes.create_index([("email", 1), ("purpose", 1)])
     await db.verification_codes.create_index("expires_at")
+    await db.password_reset_tokens.create_index("token_hash", unique=True)
+    await db.password_reset_tokens.create_index([("user_id", 1), ("created_at", -1)])
+    await db.password_reset_tokens.create_index("expires_at")
     await db.contacts.create_index([("user_id", 1), ("created_at", -1)])
     await db.contacts.create_index([("user_id", 1), ("number", 1)])
+    await db.payment_transactions.create_index("session_id", unique=True)
+    await db.payment_transactions.create_index([("user_id", 1), ("created_at", -1)])
 
     admin_email = os.environ.get("ADMIN_EMAIL", "").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "")

@@ -9,6 +9,7 @@ export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
   const reason = new URLSearchParams(location.search).get("reason");
 
   const [email, setEmail] = useState("");
@@ -16,8 +17,13 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  // A returning user is someone who has successfully logged in on this device before.
-  const isReturningUser = localStorage.getItem("zimlink_has_logged_in") === "true";
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+
+  const isReturningUser =
+    localStorage.getItem("zimlink_has_logged_in") === "true";
 
   const submit = async (e) => {
     e.preventDefault();
@@ -25,14 +31,65 @@ export default function Login() {
 
     try {
       await login(email, password);
+
       localStorage.setItem("zimlink_has_logged_in", "true");
+
       toast.success("Welcome back!");
+
       navigate("/home", { replace: true });
     } catch (err) {
       const msg = err?.response?.data?.detail || "Login failed";
+
       toast.error(typeof msg === "string" ? msg : "Login failed");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const openForgotPassword = () => {
+    setResetEmail(email);
+    setResetSent(false);
+    setShowForgotPassword(true);
+  };
+
+  const closeForgotPassword = () => {
+    if (resetBusy) return;
+
+    setShowForgotPassword(false);
+  };
+
+  const requestPasswordReset = async (e) => {
+    e.preventDefault();
+
+    const normalizedEmail = resetEmail.trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      toast.error("Enter your email address.");
+      return;
+    }
+
+    setResetBusy(true);
+
+    try {
+      await api.post("/auth/password-reset/request-link", {
+        email: normalizedEmail,
+      });
+
+      setResetSent(true);
+
+      toast.success("Check your email for the password reset link.");
+    } catch (err) {
+      const msg =
+        err?.response?.data?.detail ||
+        "Could not send the password reset email.";
+
+      toast.error(
+        typeof msg === "string"
+          ? msg
+          : "Could not send the password reset email."
+      );
+    } finally {
+      setResetBusy(false);
     }
   };
 
@@ -68,8 +125,10 @@ export default function Login() {
             <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">
               Email
             </label>
+
             <input
               type="email"
+              autoComplete="email"
               className="w-full mt-2 h-11 rounded-lg px-3 bg-white border border-neutral-200 outline-none focus:border-green-600 text-black"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -79,27 +138,21 @@ export default function Login() {
           </div>
 
           <div>
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">
-                Password
-              </label>
-              <Link
-                to="/forgot-password"
-                className="text-xs font-medium text-green-600 hover:underline"
-                data-testid="forgot-password-link"
-              >
-                Forgot password?
-              </Link>
-            </div>
+            <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">
+              Password
+            </label>
+
             <div className="relative mt-2">
               <input
                 type={showPassword ? "text" : "password"}
+                autoComplete="current-password"
                 className="w-full h-11 rounded-lg px-3 pr-11 bg-white border border-neutral-200 outline-none focus:border-green-600 text-black"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 data-testid="login-password-input"
               />
+
               <button
                 type="button"
                 onClick={() => setShowPassword((prev) => !prev)}
@@ -136,6 +189,7 @@ export default function Login() {
                       strokeLinejoin="round"
                       d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
                     />
+
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -156,18 +210,135 @@ export default function Login() {
             {busy ? "Signing in…" : "Sign in"}
           </button>
 
-          <p className="text-sm text-center text-neutral-500">
-            New here?{" "}
+          <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-sm text-neutral-500">
+            <span>New here?</span>
+
             <Link
               to="/register"
-              className="font-medium text-green-600"
+              className="font-medium text-green-600 hover:underline"
               data-testid="go-to-register"
             >
               Create an account
             </Link>
-          </p>
+
+            <span className="text-neutral-300">•</span>
+
+            <button
+              type="button"
+              onClick={openForgotPassword}
+              className="font-medium text-green-600 hover:underline"
+              data-testid="forgot-password-button"
+            >
+              Forgot password?
+            </button>
+          </div>
         </form>
       </div>
+
+      {showForgotPassword && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              closeForgotPassword();
+            }
+          }}
+          data-testid="forgot-password-modal"
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white border border-neutral-200 shadow-xl p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold text-black">
+                  Reset your password
+                </h2>
+
+                <p className="mt-2 text-sm leading-6 text-neutral-500">
+                  Enter the email connected to your ZimLink account. We will
+                  send you a secure link to create a new password.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeForgotPassword}
+                disabled={resetBusy}
+                className="rounded-lg p-1 text-neutral-500 hover:bg-neutral-100 disabled:opacity-50"
+                aria-label="Close password reset"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-5 w-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            {resetSent ? (
+              <div className="mt-6">
+                <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+                  <p className="font-medium text-green-800">
+                    Check your email
+                  </p>
+
+                  <p className="mt-1 text-sm leading-6 text-green-700">
+                    If an account exists for{" "}
+                    <strong>{resetEmail}</strong>, a password reset link has
+                    been sent. The link expires in 30 minutes.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeForgotPassword}
+                  className="mt-5 w-full h-12 rounded-xl bg-black text-white font-medium"
+                >
+                  Back to sign in
+                </button>
+              </div>
+            ) : (
+              <form
+                onSubmit={requestPasswordReset}
+                className="mt-6 space-y-5"
+              >
+                <div>
+                  <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">
+                    Email
+                  </label>
+
+                  <input
+                    type="email"
+                    autoComplete="email"
+                    value={resetEmail}
+                    onChange={(e) => setResetEmail(e.target.value)}
+                    required
+                    autoFocus
+                    className="w-full mt-2 h-11 rounded-lg px-3 bg-white border border-neutral-200 outline-none focus:border-green-600 text-black"
+                    data-testid="forgot-password-email-input"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={resetBusy}
+                  className="w-full h-12 rounded-xl bg-green-600 text-white font-medium disabled:opacity-50"
+                  data-testid="send-reset-link-button"
+                >
+                  {resetBusy ? "Sending link…" : "Send reset link"}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
