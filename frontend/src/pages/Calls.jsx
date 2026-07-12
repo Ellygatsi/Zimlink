@@ -14,6 +14,7 @@ import {
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { useTelnyxDevice } from "@/hooks/useTelnyxDevice";
+import { useAuth } from "@/context/AuthContext";
 
 function formatDuration(totalSeconds) {
   const minutes = Math.floor(totalSeconds / 60);
@@ -22,6 +23,8 @@ function formatDuration(totalSeconds) {
 }
 
 export default function Calls() {
+  const { setCallInProgress } = useAuth();
+
   const [number, setNumber] = useState("+263");
   const [history, setHistory] = useState([]);
   const [quote, setQuote] = useState(null);
@@ -52,6 +55,28 @@ export default function Calls() {
     acceptIncoming,
     rejectIncoming,
   } = useTelnyxDevice(true);
+
+  /*
+   * Pause automatic inactivity logout whenever:
+   * - an outgoing call is ringing,
+   * - a call is connected, or
+   * - an incoming call is waiting to be answered.
+   *
+   * When the call finishes, is rejected, fails, or this page unmounts,
+   * the normal inactivity timer starts again.
+   */
+  const callSessionActive =
+    status === "calling" ||
+    status === "in-call" ||
+    Boolean(incomingCall);
+
+  useEffect(() => {
+    setCallInProgress(callSessionActive);
+
+    return () => {
+      setCallInProgress(false);
+    };
+  }, [callSessionActive, setCallInProgress]);
 
   const loadHistory = async () => {
     try {
