@@ -244,14 +244,21 @@ export default function WalletPage() {
       </div>
 
       <div>
-        <p className="text-[10px] md:text-xs font-medium tracking-widest text-green-500 uppercase mb-3">
-          Recent activity
-        </p>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-[10px] md:text-xs font-medium tracking-widest text-green-500 uppercase">
+            Top-up history
+          </p>
 
-        <div className="space-y-2" data-testid="transactions-list">
-          {txs.length === 0 && (
+          <p className="text-xs text-neutral-500">
+            {txs.filter((tx) => !tx.from_email && !tx.to_email).length} top-up
+            {txs.filter((tx) => !tx.from_email && !tx.to_email).length === 1 ? "" : "s"}
+          </p>
+        </div>
+
+        <div className="space-y-2" data-testid="topup-history-list">
+          {txs.filter((tx) => !tx.from_email && !tx.to_email).length === 0 && (
             <div className="rounded-xl p-6 text-sm text-neutral-500 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
-              No transactions yet. Tap{" "}
+              No top-ups yet. Tap{" "}
               <span className="font-medium text-black dark:text-white">
                 Top up
               </span>{" "}
@@ -259,35 +266,81 @@ export default function WalletPage() {
             </div>
           )}
 
-          {txs.map((tx) => {
-            const amount = Number(
-              tx.amount ||
-              tx.credited_amount ||
-              tx.package_amount ||
-              0
-            );
+          {txs
+            .filter((tx) => !tx.from_email && !tx.to_email)
+            .sort(
+              (a, b) =>
+                new Date(b.created_at || 0).getTime() -
+                new Date(a.created_at || 0).getTime()
+            )
+            .map((tx, index) => {
+              const amount = Number(
+                tx.credited_amount ||
+                tx.amount ||
+                tx.package_amount ||
+                0
+              );
 
-            return (
-              <div
-                key={tx.id}
-                className="rounded-xl p-4 flex items-center justify-between bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
-              >
-                <div>
-                  <p className="font-medium text-sm text-black dark:text-white">
-                    {tx.from_email || tx.to_email ? "Wallet transfer" : "Wallet top-up"}
-                  </p>
-                  <p className="text-xs text-neutral-500">
-                    {new Date(tx.created_at).toLocaleString()}
-                    {tx.note ? ` · ${tx.note}` : ""}
+              const status = String(
+                tx.status || tx.payment_status || "completed"
+              ).toLowerCase();
+
+              const isPending =
+                status === "pending" ||
+                status === "processing" ||
+                status === "created";
+
+              const isFailed =
+                status === "failed" ||
+                status === "cancelled" ||
+                status === "expired";
+
+              return (
+                <div
+                  key={tx.id || `${tx.created_at}-${index}`}
+                  className="rounded-xl p-4 flex items-center justify-between gap-4 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-sm text-black dark:text-white">
+                        Wallet top-up
+                      </p>
+
+                      <span
+                        className={`text-[10px] font-medium uppercase tracking-wide rounded-full px-2 py-0.5 ${
+                          isPending
+                            ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                            : isFailed
+                            ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300"
+                            : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"
+                        }`}
+                      >
+                        {isPending ? "Pending" : isFailed ? "Failed" : "Completed"}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-neutral-500 mt-1">
+                      {tx.created_at
+                        ? new Date(tx.created_at).toLocaleString()
+                        : "Date unavailable"}
+                      {tx.note ? ` · ${tx.note}` : ""}
+                    </p>
+                  </div>
+
+                  <p
+                    className={`text-base font-medium shrink-0 ${
+                      isFailed
+                        ? "text-red-600 dark:text-red-400"
+                        : isPending
+                        ? "text-amber-600 dark:text-amber-400"
+                        : "text-green-600 dark:text-green-500"
+                    }`}
+                  >
+                    {isFailed ? "" : "+"}${amount.toFixed(2)}
                   </p>
                 </div>
-
-                <p className="text-base font-medium text-green-600 dark:text-green-500">
-                  +${amount.toFixed(2)}
-                </p>
-              </div>
-            );
-          })}
+              );
+            })}
         </div>
       </div>
 

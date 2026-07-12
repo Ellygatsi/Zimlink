@@ -13,7 +13,11 @@ export default function Login() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // A returning user is someone who has successfully logged in on this device before.
+  const isReturningUser = localStorage.getItem("zimlink_has_logged_in") === "true";
 
   const submit = async (e) => {
     e.preventDefault();
@@ -21,6 +25,7 @@ export default function Login() {
 
     try {
       await login(email, password);
+      localStorage.setItem("zimlink_has_logged_in", "true");
       toast.success("Welcome back!");
       navigate("/home", { replace: true });
     } catch (err) {
@@ -48,7 +53,7 @@ export default function Login() {
           data-testid="login-form"
         >
           <h2 className="text-2xl font-medium text-black">
-            Welcome back.
+            {isReturningUser ? "Welcome back." : "Sign in to continue."}
           </h2>
 
           {reason === "inactive" && (
@@ -74,17 +79,72 @@ export default function Login() {
           </div>
 
           <div>
-            <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">
-              Password
-            </label>
-            <input
-              type="password"
-              className="w-full mt-2 h-11 rounded-lg px-3 bg-white border border-neutral-200 outline-none focus:border-green-600 text-black"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              data-testid="login-password-input"
-            />
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">
+                Password
+              </label>
+              <Link
+                to="/forgot-password"
+                className="text-xs font-medium text-green-600 hover:underline"
+                data-testid="forgot-password-link"
+              >
+                Forgot password?
+              </Link>
+            </div>
+            <div className="relative mt-2">
+              <input
+                type={showPassword ? "text" : "password"}
+                className="w-full h-11 rounded-lg px-3 pr-11 bg-white border border-neutral-200 outline-none focus:border-green-600 text-black"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                data-testid="login-password-input"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-neutral-500 hover:text-neutral-700"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                data-testid="toggle-password-visibility"
+              >
+                {showPassword ? (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-5 w-5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M13.875 18.825A10.05 10.05 0 0112 19c-5 0-9.27-3.11-11-7.5a10.94 10.94 0 012.83-4.13M6.1 6.1A9.98 9.98 0 0112 5c5 0 9.27 3.11 11 7.5a10.97 10.97 0 01-4.29 5.13M6.1 6.1L3 3m3.1 3.1l14.8 14.8M9.9 9.9a3 3 0 104.2 4.2"
+                    />
+                  </svg>
+                ) : (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-5 w-5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                  </svg>
+                )}
+              </button>
+            </div>
           </div>
 
           <button

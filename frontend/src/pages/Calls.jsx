@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import api from "@/lib/api";
 import {
   Phone,
@@ -6,6 +6,11 @@ import {
   CheckCircle,
   XCircle,
   SpeakerHigh,
+  AddressBook,
+  ClockCounterClockwise,
+  Star,
+  Plus,
+  DownloadSimple,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { useTelnyxDevice } from "@/hooks/useTelnyxDevice";
@@ -25,6 +30,14 @@ export default function Calls() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [audioDevices, setAudioDevices] = useState([]);
   const [selectedOutputDevice, setSelectedOutputDevice] = useState("");
+
+  // --- New: tabs, contacts, favourites ---
+  const [activeTab, setActiveTab] = useState("history"); // "contacts" | "history" | "favourites"
+  const [contacts, setContacts] = useState([]);
+  const [contactImportSupported, setContactImportSupported] = useState(false);
+  const [newContactName, setNewContactName] = useState("");
+  const [newContactNumber, setNewContactNumber] = useState("");
+  const [addingContact, setAddingContact] = useState(false);
 
   const hasConnectedRef = useRef(false);
   const callStartRef = useRef(null);
@@ -53,6 +66,16 @@ export default function Calls() {
       setVoiceConfig(data);
     } catch (_e) {
       setVoiceConfig({ enabled: false, configured: false });
+    }
+  };
+
+  const loadContacts = async () => {
+    try {
+      const { data } = await api.get("/voice/contacts");
+      setContacts(data);
+    } catch (_e) {
+      // Contacts endpoint may not exist yet on the backend — fail quietly.
+      setContacts([]);
     }
   };
 
@@ -112,7 +135,16 @@ export default function Calls() {
   useEffect(() => {
     loadConfig();
     loadHistory();
+    loadContacts();
     fetchQuote("+263");
+
+    // Feature-detect the Contact Picker API. Supported on Android Chrome;
+    // NOT supported on iPhone Safari (Apple has no equivalent API).
+    setContactImportSupported(
+      typeof navigator !== "undefined" &&
+        "contacts" in navigator &&
+        "select" in navigator.contacts
+    );
   }, []);
 
   useEffect(() => {
@@ -201,8 +233,10 @@ export default function Calls() {
     fetchQuote(value);
   };
 
-  const dial = async () => {
-    const target = number.trim();
+  // Now accepts an optional target so Contacts/Favourites can trigger a call
+  // directly without waiting on state to update.
+  const dial = async (targetOverride) => {
+    const target = (targetOverride || number).trim();
 
     if (!target) {
       toast.error("Please enter a phone number.");
@@ -213,6 +247,8 @@ export default function Calls() {
       toast.error("Use international format, for example +26377XXXXXXX.");
       return;
     }
+
+    setNumber(target);
 
     try {
       await api.get(`/voice/rate-quote?to=${encodeURIComponent(target)}`);
@@ -283,6 +319,80 @@ export default function Calls() {
     }
   };
 
+  // --- New: Contacts ---
+  const handleAddContact = async (e) => {
+    e.preventDefault();
+
+    const name = newContactName.trim();
+    const num = newContactNumber.trim();
+
+    if (!num.startsWith("+")) {
+      toast.error("Use international format, for example +26377XXXXXXX.");
+      return;
+    }
+
+    setAddingContact(true);
+    try {
+      await api.post("/voice/contacts", { name, number: num });
+      toast.success("Contact added.");
+      setNewContactName("");
+      setNewContactNumber("");
+      loadContacts();
+    } catch (_err) {
+      toast.error("Could not add contact.");
+    } finally {
+      setAddingContact(false);
+    }
+  };
+
+  const importFromPhone = async () => {
+    if (!contactImportSupported) {
+      toast.error(
+        "Importing contacts isn't supported on this device's browser (this includes iPhone Safari). Please add contacts manually below."
+      );
+      return;
+    }
+
+    try {
+      const selected = await navigator.contacts.select(["name", "tel"], { multiple: true });
+
+      let importedCount = 0;
+      for (const c of selected) {
+        const name = c.name?.[0] || "";
+        const tel = c.tel?.[0] || "";
+        if (tel) {
+          await api.post("/voice/contacts", { name, number: tel }).catch(() => {});
+          importedCount += 1;
+        }
+      }
+
+      toast.success(`Imported ${importedCount} contact${importedCount === 1 ? "" : "s"}.`);
+      loadContacts();
+    } catch (_err) {
+      toast.error("Could not import contacts.");
+    }
+  };
+
+  // --- New: Favourites, derived from call history (most-called numbers) ---
+  const favourites = useMemo(() => {
+    const counts = {};
+
+    for (const h of history) {
+      if (!h.to) continue;
+      if (!counts[h.to]) {
+        counts[h.to] = { number: h.to, name: h.to_name || "", count: 0 };
+      }
+      counts[h.to].count += 1;
+      if (!counts[h.to].name && h.to_name) {
+        counts[h.to].name = h.to_name;
+      }
+    }
+
+    return Object.values(counts)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+  }, [history]);
+
   const isReady = voiceConfig?.enabled && status === "ready";
   const isOnCall = status === "calling" || status === "in-call";
 
@@ -318,6 +428,13 @@ export default function Calls() {
     if (s === "billing_failed") return "billing failed";
     return s;
   };
+
+  const tabButtonClasses = (tab) =>
+    `flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg py-2.5 text-xs md:text-sm font-medium transition-colors ${
+      activeTab === tab
+        ? "bg-green-600 text-black"
+        : "bg-neutral-100 dark:bg-neutral-900 text-neutral-500 dark:text-neutral-400"
+    }`;
 
   return (
     <div className="space-y-5 md:space-y-6" data-testid="calls-page">
@@ -445,7 +562,7 @@ export default function Calls() {
         />
 
         <button
-          onClick={dial}
+          onClick={() => dial()}
           disabled={!number || isOnCall}
           className="w-full mt-5 h-14 rounded-xl text-base font-medium bg-green-600 text-black flex items-center justify-center gap-2 disabled:opacity-50 transition-opacity"
           data-testid="call-button"
@@ -473,36 +590,176 @@ export default function Calls() {
         )}
       </div>
 
-      <div className="space-y-3" data-testid="recent-calls">
-        <div>
-          <p className="text-[10px] md:text-xs font-medium tracking-widest text-green-500 uppercase">Recent calls</p>
-          <h2 className="text-xl md:text-2xl font-medium mt-1 text-black dark:text-white">Call history</h2>
+      {/* --- Tabs: Contacts / History / Favourites --- */}
+      <div className="space-y-4" data-testid="calls-tabs">
+        <div className="flex gap-2 rounded-xl p-1.5 bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800">
+          <button
+            className={tabButtonClasses("contacts")}
+            onClick={() => setActiveTab("contacts")}
+            data-testid="tab-contacts"
+          >
+            <AddressBook size={16} weight="bold" /> Contacts
+          </button>
+          <button
+            className={tabButtonClasses("history")}
+            onClick={() => setActiveTab("history")}
+            data-testid="tab-history"
+          >
+            <ClockCounterClockwise size={16} weight="bold" /> History
+          </button>
+          <button
+            className={tabButtonClasses("favourites")}
+            onClick={() => setActiveTab("favourites")}
+            data-testid="tab-favourites"
+          >
+            <Star size={16} weight="bold" /> Favourites
+          </button>
         </div>
 
-        {history.length === 0 && (
-          <div className="rounded-xl p-5 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
-            <p className="text-sm text-neutral-500">No recent calls yet.</p>
+        {activeTab === "contacts" && (
+          <div className="space-y-4" data-testid="contacts-tab">
+            <button
+              onClick={importFromPhone}
+              className="inline-flex items-center gap-1.5 rounded-full bg-black dark:bg-white text-white dark:text-black px-4 py-2 text-sm font-medium"
+              data-testid="import-contacts-button"
+            >
+              <DownloadSimple size={16} weight="bold" />
+              Import from phone
+            </button>
+
+            {!contactImportSupported && (
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                Contact import isn't available on this browser (iPhone Safari doesn't support it) — add contacts manually below.
+              </p>
+            )}
+
+            <form
+              onSubmit={handleAddContact}
+              className="rounded-xl p-4 space-y-3 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
+              data-testid="add-contact-form"
+            >
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input
+                  type="text"
+                  placeholder="Name"
+                  value={newContactName}
+                  onChange={(e) => setNewContactName(e.target.value)}
+                  className="h-11 rounded-lg px-3 bg-white dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 outline-none focus:border-green-600 text-black dark:text-white"
+                  data-testid="new-contact-name"
+                />
+                <input
+                  type="tel"
+                  placeholder="+263 77 000 0000"
+                  value={newContactNumber}
+                  onChange={(e) => setNewContactNumber(e.target.value)}
+                  required
+                  className="h-11 rounded-lg px-3 bg-white dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 outline-none focus:border-green-600 text-black dark:text-white"
+                  data-testid="new-contact-number"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={addingContact}
+                className="inline-flex items-center gap-1.5 rounded-full bg-green-600 text-black px-4 py-2 text-sm font-medium disabled:opacity-50"
+                data-testid="add-contact-button"
+              >
+                <Plus size={16} weight="bold" /> {addingContact ? "Adding…" : "Add contact"}
+              </button>
+            </form>
+
+            {contacts.length === 0 && (
+              <div className="rounded-xl p-5 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                <p className="text-sm text-neutral-500">No contacts yet.</p>
+              </div>
+            )}
+
+            {contacts.map((c) => (
+              <div
+                key={c.id}
+                className="rounded-xl p-4 flex items-center justify-between bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
+              >
+                <div>
+                  <p className="font-medium text-sm text-black dark:text-white">{c.name || c.number}</p>
+                  <p className="text-xs text-neutral-500 mt-0.5">{c.number}</p>
+                </div>
+
+                <button
+                  onClick={() => dial(c.number)}
+                  disabled={isOnCall}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-green-600 text-black px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                >
+                  <Phone size={14} weight="fill" /> Call
+                </button>
+              </div>
+            ))}
           </div>
         )}
 
-        {history.map((h) => (
-          <div
-            key={h.id}
-            className="rounded-xl p-4 flex items-center justify-between bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
-          >
-            <div>
-              <p className="font-medium text-sm text-black dark:text-white">{h.to_name || h.to}</p>
-              <p className="text-xs text-neutral-500 mt-0.5">
-                {new Date(h.created_at).toLocaleString()}
-                {h.duration_seconds ? ` · ${Math.floor(h.duration_seconds / 60)}m ${h.duration_seconds % 60}s` : ""}
-              </p>
-            </div>
+        {activeTab === "history" && (
+          <div className="space-y-3" data-testid="recent-calls">
+            {history.length === 0 && (
+              <div className="rounded-xl p-5 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                <p className="text-sm text-neutral-500">No recent calls yet.</p>
+              </div>
+            )}
 
-            <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadgeClasses(h.status)}`}>
-              {statusBadgeLabel(h.status)}
-            </span>
+            {history.map((h) => (
+              <div
+                key={h.id}
+                className="rounded-xl p-4 flex items-center justify-between bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
+              >
+                <div>
+                  <p className="font-medium text-sm text-black dark:text-white">{h.to_name || h.to}</p>
+                  <p className="text-xs text-neutral-500 mt-0.5">
+                    {new Date(h.created_at).toLocaleString()}
+                    {h.duration_seconds ? ` · ${Math.floor(h.duration_seconds / 60)}m ${h.duration_seconds % 60}s` : ""}
+                  </p>
+                </div>
+
+                <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadgeClasses(h.status)}`}>
+                  {statusBadgeLabel(h.status)}
+                </span>
+              </div>
+            ))}
           </div>
-        ))}
+        )}
+
+        {activeTab === "favourites" && (
+          <div className="space-y-3" data-testid="favourites-tab">
+            {favourites.length === 0 && (
+              <div className="rounded-xl p-5 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                <p className="text-sm text-neutral-500">
+                  Favourites are built automatically from who you call most — make a few calls and they'll show up here.
+                </p>
+              </div>
+            )}
+
+            {favourites.map((f) => (
+              <div
+                key={f.number}
+                className="rounded-xl p-4 flex items-center justify-between bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
+              >
+                <div className="flex items-center gap-3">
+                  <Star size={18} weight="fill" className="text-green-600" />
+                  <div>
+                    <p className="font-medium text-sm text-black dark:text-white">{f.name || f.number}</p>
+                    <p className="text-xs text-neutral-500 mt-0.5">
+                      {f.number} · {f.count} call{f.count === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => dial(f.number)}
+                  disabled={isOnCall}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-green-600 text-black px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                >
+                  <Phone size={14} weight="fill" /> Call
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
