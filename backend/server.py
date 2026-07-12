@@ -358,6 +358,10 @@ class EventIn(BaseModel):
 class BuyTicketIn(BaseModel):
     quantity: int = Field(ge=1, le=10, default=1)
 
+class ContactIn(BaseModel):
+    name: Optional[str] = ""
+    number: str = Field(min_length=1)
+
 
 # ----- Auth Endpoints -----
 @api.post("/auth/register/request-code")
@@ -404,6 +408,8 @@ async def verify_register_code(data: VerifyRegisterCodeIn, response: Response):
         "avatar_url": "",
         "wallet_balance": 0.0,
         "is_admin": False,
+        "is_verified_seller": False,
+        "account_status": "active",
         "email_verified": True,
         "created_at": now_iso(),
     }
@@ -544,39 +550,44 @@ async def transactions(current=Depends(get_current_user)):
 
 # ----- Stripe Wallet Top-up -----
 async def get_app_settings() -> dict:
-    s = await db.app_settings.find_one({"id": "global"}, {"_id": 0})
-    if not s:
-        s = {
+    """Global wallet/top-up settings.
+
+    For Stripe, users are credited the full package amount.
+    Stripe processing fees are not shown to users and are not deducted from wallet credit.
+    """
+    settings = await db.app_settings.find_one({"id": "global"}, {"_id": 0})
+    if not settings:
+        settings = {
             "id": "global",
-            "deposit_fee_percent": 3.0,
+            "deposit_fee_percent": 0.0,
             "min_topup": 5.0,
             "max_topup": 500.0,
             "topup_packages": [5.0, 10.0, 25.0, 50.0, 100.0, 250.0],
+            "created_at": now_iso(),
         }
-        await db.app_settings.insert_one(s)
-        s.pop("_id", None)
-    return s
+        await db.app_settings.insert_one(settings)
+        settings.pop("_id", None)
+    return settings
 
 
 @api.get("/wallet/topup/packages")
 async def list_topup_packages(current=Depends(get_current_user)):
-    s = await get_app_settings()
-    fee_pct = float(s.get("deposit_fee_percent", 0.0))
+    settings = await get_app_settings()
     packages = []
-    for amt in s.get("topup_packages", []):
-        amt_f = float(amt)
-        fee = round(amt_f * fee_pct / 100.0, 2)
-        credited = round(amt_f - fee, 2)
+
+    for amount in settings.get("topup_packages", [5.0, 10.0, 25.0, 50.0, 100.0]):
+        amount_f = float(amount)
         packages.append({
-            "amount": amt_f,
-            "fee": fee,
-            "credited": credited,
+            "amount": amount_f,
+            "fee": 0.0,
+            "credited": amount_f,
         })
+
     return {
-        "deposit_fee_percent": fee_pct,
+        "deposit_fee_percent": 0.0,
         "packages": packages,
-        "min_topup": s.get("min_topup", 5.0),
-        "max_topup": s.get("max_topup", 500.0),
+        "min_topup": float(settings.get("min_topup", 5.0)),
+        "max_topup": float(settings.get("max_topup", 500.0)),
     }
 
 
@@ -586,77 +597,92 @@ class TopUpRequest(BaseModel):
 
 
 @api.post("/wallet/topup/checkout")
-async def create_topup_checkout(data: TopUpRequest, request: Request, current=Depends(get_current_user)):
-    s = await get_app_settings()
-    allowed = [float(a) for a in s.get("topup_packages", [])]
-    amt = float(data.package_amount)
-    if amt not in allowed:
+async def create_topup_checkout(data: TopUpRequest, current=Depends(get_current_user)):
+    if not stripe.api_key:
+        raise HTTPException(status_code=500, detail="Stripe is not configured")
+
+    settings = await get_app_settings()
+    allowed = [float(a) for a in settings.get("topup_packages", [])]
+    amount = float(data.package_amount)
+
+    if amount not in allowed:
         raise HTTPException(status_code=400, detail="Invalid package amount")
 
-    fee_pct = float(s.get("deposit_fee_percent", 0.0))
-    fee_amount = round(amt * fee_pct / 100.0, 2)
-    credited = round(amt - fee_amount, 2)
+    # User pays this amount and receives the full amount in ZimLink wallet.
+    # Stripe fees are absorbed by ZimLink and are not shown/deducted from user credit.
+    fee_amount = 0.0
+    credited_amount = amount
 
     origin = data.origin_url.rstrip("/")
     success_url = f"{origin}/wallet?session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{origin}/wallet?cancelled=1"
 
-    metadata = {
-        "user_id": current["id"],
-        "user_email": current["email"],
-        "amount": str(amt),
-        "fee_amount": str(fee_amount),
-        "credited_amount": str(credited),
-        "purpose": "wallet_topup",
-    }
-
-    session = stripe.checkout.Session.create(
-        mode="payment",
-        line_items=[{
-            "price_data": {
-                "currency": "usd",
-                "product_data": {"name": "Zimlink Wallet Top-up"},
-                "unit_amount": int(round(amt * 100)),
+    try:
+        session = stripe.checkout.Session.create(
+            mode="payment",
+            payment_method_types=["card"],
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {
+                        "name": f"ZimLink Wallet Top-up ${amount:.2f}",
+                    },
+                    "unit_amount": int(round(amount * 100)),
+                },
+                "quantity": 1,
+            }],
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata={
+                "purpose": "wallet_topup",
+                "user_id": current["id"],
+                "user_email": current["email"],
+                "amount": str(amount),
+                "fee_amount": str(fee_amount),
+                "credited_amount": str(credited_amount),
             },
-            "quantity": 1,
-        }],
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata=metadata,
-    )
+        )
+    except Exception as exc:
+        logger.error(f"Stripe checkout creation failed: {exc}")
+        raise HTTPException(status_code=502, detail="Could not create Stripe checkout session")
 
     tx = {
         "id": new_id(),
+        "provider": "stripe",
         "user_id": current["id"],
         "user_email": current["email"],
         "session_id": session.id,
-        "package_amount": amt,
+        "package_amount": amount,
         "fee_amount": fee_amount,
-        "credited_amount": credited,
+        "credited_amount": credited_amount,
         "currency": "usd",
         "status": "initiated",
         "payment_status": "unpaid",
-        "metadata": metadata,
         "created_at": now_iso(),
         "completed_at": None,
     }
     await db.payment_transactions.insert_one(tx)
 
-    return {"url": session.url, "session_id": session.id}
+    return {
+        "url": session.url,
+        "checkout_url": session.url,
+        "session_id": session.id,
+    }
 
 
 async def _process_completed_payment(session_id: str) -> dict:
     tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
+
     if tx.get("payment_status") == "paid":
         return tx
 
-    session = stripe.checkout.Session.retrieve(session_id)
-
-    new_status = tx["status"]
-    new_payment_status = tx["payment_status"]
-    completed_at = tx.get("completed_at")
+    try:
+        session = stripe.checkout.Session.retrieve(session_id)
+    except Exception as exc:
+        logger.error(f"Stripe session retrieve failed: {exc}")
+        raise HTTPException(status_code=502, detail="Could not verify payment status")
 
     if session.payment_status == "paid":
         result = await db.payment_transactions.update_one(
@@ -667,60 +693,40 @@ async def _process_completed_payment(session_id: str) -> dict:
                 "completed_at": now_iso(),
             }},
         )
+
         if result.modified_count == 1:
             await db.users.update_one(
                 {"id": tx["user_id"]},
-                {"$inc": {"wallet_balance": float(tx["credited_amount"])}},
+                {"$inc": {"wallet_balance": float(tx.get("credited_amount", 0.0))}},
             )
-        new_status = "completed"
-        new_payment_status = "paid"
-        completed_at = now_iso()
-    elif session.status == "expired":
+            tx["status"] = "completed"
+            tx["payment_status"] = "paid"
+            tx["completed_at"] = now_iso()
+
+    elif getattr(session, "status", None) == "expired":
         await db.payment_transactions.update_one(
             {"session_id": session_id},
             {"$set": {"status": "expired"}},
         )
-        new_status = "expired"
+        tx["status"] = "expired"
 
-    return {**tx, "status": new_status, "payment_status": new_payment_status, "completed_at": completed_at}
+    return tx
 
 
 @api.get("/wallet/topup/status/{session_id}")
 async def topup_status(session_id: str, current=Depends(get_current_user)):
     tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
-    if not tx or tx["user_id"] != current["id"]:
+    if not tx or tx.get("user_id") != current["id"]:
         raise HTTPException(status_code=404, detail="Transaction not found")
+
     updated = await _process_completed_payment(session_id)
     return {
-        "status": updated["status"],
-        "payment_status": updated["payment_status"],
-        "amount": updated["package_amount"],
-        "credited": updated["credited_amount"],
-        "fee": updated["fee_amount"],
+        "status": updated.get("status"),
+        "payment_status": updated.get("payment_status"),
+        "amount": float(updated.get("package_amount", 0.0)),
+        "credited": float(updated.get("credited_amount", 0.0)),
+        "fee": 0.0,
     }
-
-
-@api.post("/webhook/stripe")
-async def stripe_webhook(request: Request):
-    body = await request.body()
-    sig = request.headers.get("Stripe-Signature", "")
-    try:
-        if STRIPE_WEBHOOK_SECRET:
-            event = stripe.Webhook.construct_event(body, sig, STRIPE_WEBHOOK_SECRET)
-        else:
-            event = stripe.Event.construct_from(
-                __import__("json").loads(body), stripe.api_key
-            )
-        if event["type"] == "checkout.session.completed":
-            session_obj = event["data"]["object"]
-            session_id = session_obj["id"]
-            payment_status = session_obj.get("payment_status")
-            if payment_status == "paid":
-                await _process_completed_payment(session_id)
-        return {"ok": True}
-    except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        raise HTTPException(status_code=400, detail="Webhook handling failed")
 
 
 @api.get("/wallet/topup/history")
@@ -731,10 +737,48 @@ async def topup_history(current=Depends(get_current_user)):
     return items
 
 
+@api.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig = request.headers.get("Stripe-Signature", "")
+
+    try:
+        if STRIPE_WEBHOOK_SECRET:
+            event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+        else:
+            # Helpful during local/dev testing only. In production, set STRIPE_WEBHOOK_SECRET.
+            import json
+            event = stripe.Event.construct_from(json.loads(payload), stripe.api_key)
+    except Exception as exc:
+        logger.error(f"Stripe webhook error: {exc}")
+        raise HTTPException(status_code=400, detail="Invalid Stripe webhook")
+
+    if event["type"] == "checkout.session.completed":
+        session_obj = event["data"]["object"]
+        session_id = session_obj["id"]
+        payment_status = session_obj.get("payment_status")
+
+        if payment_status == "paid":
+            try:
+                await _process_completed_payment(session_id)
+            except Exception as exc:
+                logger.error(f"Could not process Stripe payment {session_id}: {exc}")
+                raise HTTPException(status_code=500, detail="Could not process payment")
+
+    return {"ok": True}
+
+
 # ----- Marketplace -----
 @api.post("/marketplace/listings")
 async def create_listing(data: ListingIn, current=Depends(get_current_user)):
+    if not current.get("is_admin") and not current.get("is_verified_seller"):
+        raise HTTPException(
+            status_code=403,
+            detail="You must be a verified seller before posting on Marketplace."
+        )
+
     listing = {
+        "status": "active",
         "id": new_id(),
         "title": data.title,
         "description": data.description,
@@ -889,7 +933,14 @@ async def post_channel_message(channel_id: str, data: MessageIn, current=Depends
 # ----- Events -----
 @api.post("/events")
 async def create_event(data: EventIn, current=Depends(get_current_user)):
+    if not current.get("is_admin") and not current.get("is_verified_seller"):
+        raise HTTPException(
+            status_code=403,
+            detail="You must be a verified seller before posting events."
+        )
+
     event = {
+        "status": "active",
         "id": new_id(),
         "title": data.title,
         "description": data.description,
@@ -1101,13 +1152,56 @@ async def telnyx_texml_webhook(request: Request):
     logger.info(f"[Telnyx] direction={call_direction} to={to_number} from={from_number}")
 
     texml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Dial callerId="{from_number}">
-        <Number>{to_number}</Number>
-    </Dial>
-</Response>"""
+    <Response>
+        <Dial callerId="{from_number}" answerOnBridge="true">
+            <Number>{to_number}</Number>
+        </Dial>
+    </Response>"""
 
     return Response(content=texml, media_type="application/xml")
+
+
+# ----- Contacts -----
+@api.get("/voice/contacts")
+async def list_contacts(current=Depends(get_current_user)):
+    contacts = await db.contacts.find(
+        {"user_id": current["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
+    return contacts
+
+
+@api.post("/voice/contacts")
+async def add_contact(data: ContactIn, current=Depends(get_current_user)):
+    number = data.number.strip()
+    if not number.startswith("+"):
+        raise HTTPException(
+            status_code=400,
+            detail="Use international format, for example +26377XXXXXXX."
+        )
+
+    # Avoid duplicate numbers per user.
+    existing = await db.contacts.find_one({"user_id": current["id"], "number": number})
+    if existing:
+        raise HTTPException(status_code=400, detail="This number is already in your contacts")
+
+    contact = {
+        "id": new_id(),
+        "user_id": current["id"],
+        "name": (data.name or "").strip(),
+        "number": number,
+        "created_at": now_iso(),
+    }
+    await db.contacts.insert_one(contact)
+    contact.pop("_id", None)
+    return contact
+
+
+@api.delete("/voice/contacts/{contact_id}")
+async def delete_contact(contact_id: str, current=Depends(get_current_user)):
+    result = await db.contacts.delete_one({"id": contact_id, "user_id": current["id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    return {"ok": True}
 
 
 # ----- Stats -----
@@ -1223,6 +1317,68 @@ async def admin_create_rate(data: CallRateIn, _=Depends(require_admin)):
     rate.pop("_id", None)
     return rate
 
+@api.get("/admin/marketplace/listings")
+async def admin_get_marketplace_listings(
+    q: Optional[str] = None,
+    category: Optional[str] = None,
+    status: Optional[str] = None,
+    _=Depends(require_admin)
+):
+    query = {}
+
+    if category and category != "all":
+        query["category"] = category
+
+    if status and status != "all":
+        query["status"] = status
+
+    if q:
+        query["$or"] = [
+            {"title": {"$regex": q, "$options": "i"}},
+            {"description": {"$regex": q, "$options": "i"}},
+            {"seller_name": {"$regex": q, "$options": "i"}},
+            {"seller_email": {"$regex": q, "$options": "i"}},
+        ]
+
+    listings = await db.listings.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return listings
+
+
+@api.patch("/admin/marketplace/listings/{listing_id}/approve")
+async def admin_approve_listing(listing_id: str, _=Depends(require_admin)):
+    result = await db.listings.update_one(
+        {"id": listing_id},
+        {"$set": {"status": "approved", "approved_at": now_iso()}}
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    return {"ok": True}
+
+
+@api.patch("/admin/marketplace/listings/{listing_id}/reject")
+async def admin_reject_listing(listing_id: str, _=Depends(require_admin)):
+    result = await db.listings.update_one(
+        {"id": listing_id},
+        {"$set": {"status": "rejected", "rejected_at": now_iso()}}
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    return {"ok": True}
+
+
+@api.delete("/admin/marketplace/listings/{listing_id}")
+async def admin_delete_listing(listing_id: str, _=Depends(require_admin)):
+    result = await db.listings.delete_one({"id": listing_id})
+
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    return {"ok": True}
+
 @api.put("/admin/rates/{rate_id}")
 async def admin_update_rate(rate_id: str, data: UpdateRateIn, _=Depends(require_admin)):
     update = {k: v for k, v in data.model_dump(exclude_none=True).items()}
@@ -1281,10 +1437,108 @@ async def admin_credit_user_by_email(data: AdminCreditByEmailIn, _=Depends(requi
 
     user = await db.users.find_one(
         {"email": email},
-        {"_id": 0, "id": 1, "name": 1, "email": 1, "wallet_balance": 1, "is_admin": 1},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "wallet_balance": 1, "is_admin": 1, "is_verified_seller": 1, "account_status": 1},
     )
 
     return {"ok": True, "user": user}
+
+
+@api.patch("/admin/users/{user_id}/make-admin")
+async def admin_make_user_admin(user_id: str, _=Depends(require_admin)):
+    result = await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"is_admin": True, "updated_at": now_iso()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    return {"ok": True, "user": user}
+
+
+@api.patch("/admin/users/{user_id}/remove-admin")
+async def admin_remove_user_admin(user_id: str, current=Depends(require_admin)):
+    if user_id == current.get("id"):
+        raise HTTPException(status_code=400, detail="You cannot remove your own admin access")
+
+    result = await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"is_admin": False, "updated_at": now_iso()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    return {"ok": True, "user": user}
+
+
+@api.patch("/admin/users/{user_id}/verify-seller")
+async def admin_verify_seller(user_id: str, _=Depends(require_admin)):
+    result = await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"is_verified_seller": True, "updated_at": now_iso()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    return {"ok": True, "user": user}
+
+
+@api.patch("/admin/users/{user_id}/remove-verification")
+async def admin_remove_seller_verification(user_id: str, _=Depends(require_admin)):
+    result = await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"is_verified_seller": False, "updated_at": now_iso()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    return {"ok": True, "user": user}
+
+
+@api.patch("/admin/users/{user_id}/status")
+async def admin_update_user_status(user_id: str, payload: dict, current=Depends(require_admin)):
+    status_value = (payload.get("status") or "").strip().lower()
+    if status_value not in ["active", "suspended"]:
+        raise HTTPException(status_code=400, detail="Status must be active or suspended")
+    if user_id == current.get("id") and status_value == "suspended":
+        raise HTTPException(status_code=400, detail="You cannot suspend your own account")
+
+    result = await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"account_status": status_value, "updated_at": now_iso()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    return {"ok": True, "user": user}
+
+
+@api.get("/admin/marketplace/listings")
+async def admin_marketplace_listings(limit: int = 300, _=Depends(require_admin)):
+    items = await db.listings.find({}, {"_id": 0}).sort("created_at", -1).to_list(min(limit, 500))
+    return items
+
+
+@api.delete("/admin/marketplace/listings/{listing_id}")
+async def admin_delete_marketplace_listing(listing_id: str, _=Depends(require_admin)):
+    result = await db.listings.delete_one({"id": listing_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    return {"ok": True}
+
+
+@api.get("/admin/events")
+async def admin_events(limit: int = 300, _=Depends(require_admin)):
+    items = await db.events.find({}, {"_id": 0}).sort("created_at", -1).to_list(min(limit, 500))
+    return items
+
+
+@api.delete("/admin/events/{event_id}")
+async def admin_delete_event(event_id: str, _=Depends(require_admin)):
+    result = await db.events.delete_one({"id": event_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Event not found")
+    await db.event_tickets.delete_many({"event_id": event_id})
+    return {"ok": True}
 
 
 class SettingsIn(BaseModel):
@@ -1485,6 +1739,8 @@ async def on_startup():
     await db.call_rates.create_index("prefix", unique=True)
     await db.verification_codes.create_index([("email", 1), ("purpose", 1)])
     await db.verification_codes.create_index("expires_at")
+    await db.contacts.create_index([("user_id", 1), ("created_at", -1)])
+    await db.contacts.create_index([("user_id", 1), ("number", 1)])
 
     admin_email = os.environ.get("ADMIN_EMAIL", "").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "")
@@ -1501,6 +1757,8 @@ async def on_startup():
                 "wallet_balance": 0.0,
                 "phone": "",
                 "is_admin": True,
+                "is_verified_seller": True,
+                "account_status": "active",
                 "created_at": now_iso(),
             })
             logger.info("Seeded admin user.")
@@ -1509,6 +1767,14 @@ async def on_startup():
     await db.users.update_many(
         {"is_admin": {"$exists": False}},
         {"$set": {"is_admin": False}}
+    )
+    await db.users.update_many(
+        {"is_verified_seller": {"$exists": False}},
+        {"$set": {"is_verified_seller": False}}
+    )
+    await db.users.update_many(
+        {"account_status": {"$exists": False}},
+        {"$set": {"account_status": "active"}}
     )
 
     if not await db.channels.find_one({"name": "general"}):
