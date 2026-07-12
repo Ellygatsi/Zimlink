@@ -42,10 +42,13 @@ export default function Calls() {
   const [newContactNumber, setNewContactNumber] = useState("");
   const [addingContact, setAddingContact] = useState(false);
 
-  const hasConnectedRef = useRef(false);
-  const callStartRef = useRef(null);
   const timerRef = useRef(null);
   const remoteAudioRef = useRef(null);
+
+  // One object represents one outbound call attempt from start to finish.
+  const callAttemptRef = useRef(null);
+  const previousStatusRef = useRef("idle");
+  const finalizingCallRef = useRef(false);
 
   const {
     status,
@@ -78,12 +81,18 @@ export default function Calls() {
     };
   }, [callSessionActive, setCallInProgress]);
 
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async () => {
     try {
       const { data } = await api.get("/voice/call-history");
-      setHistory(data);
-    } catch (_e) {}
-  };
+      setHistory(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error(
+        "Could not load call history:",
+        err?.response?.data?.detail || err
+      );
+      setHistory([]);
+    }
+  }, []);
 
   const loadConfig = async () => {
     try {
@@ -173,7 +182,7 @@ export default function Calls() {
         "contacts" in navigator &&
         "select" in navigator.contacts
     );
-  }, []);
+  }, [loadHistory]);
 
   useEffect(() => {
     if (status === "in-call") {
@@ -201,59 +210,190 @@ export default function Calls() {
     }
   }, [status, incomingCall]);
 
-  useEffect(() => {
-    if (status === "in-call") {
-      hasConnectedRef.current = true;
+  const stopCallTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
 
-      if (!callStartRef.current) {
-        callStartRef.current = Date.now();
+  const finalizeCall = useCallback(
+    async (requestedStatus = null) => {
+      const attempt = callAttemptRef.current;
+
+      if (!attempt || attempt.logged || finalizingCallRef.current) {
+        return;
+      }
+
+      finalizingCallRef.current = true;
+      attempt.logged = true;
+      stopCallTimer();
+
+      const endedAtMs = Date.now();
+      const connectedAtMs = attempt.connectedAtMs;
+      const durationSeconds = connectedAtMs
+        ? Math.max(0, Math.floor((endedAtMs - connectedAtMs) / 1000))
+        : 0;
+
+      let finalStatus = requestedStatus;
+      if (!finalStatus) {
+        finalStatus = connectedAtMs ? "completed" : "no_answer";
+      }
+
+      const payload = {
+        call_session_id: attempt.id,
+        to: attempt.number,
+        to_name: attempt.toName || "",
+        direction: "outbound",
+        duration_seconds: durationSeconds,
+        status: finalStatus,
+        started_at: new Date(attempt.startedAtMs).toISOString(),
+        connected_at: connectedAtMs
+          ? new Date(connectedAtMs).toISOString()
+          : null,
+        ended_at: new Date(endedAtMs).toISOString(),
+      };
+
+      try {
+        const { data } = await api.post("/voice/call-log", payload);
+
+        setHistory((current) => {
+          const withoutDuplicate = current.filter(
+            (item) => item.id !== data.id
+          );
+          return [data, ...withoutDuplicate];
+        });
+
+        await loadHistory();
+      } catch (err) {
+        // Permit one retry if the network/backend failed.
+        attempt.logged = false;
+
+        const detail = err?.response?.data?.detail;
+        console.error("Could not save call history:", detail || err);
+
+        toast.error(
+          typeof detail === "string"
+            ? detail
+            : "The call ended, but its history could not be saved."
+        );
+      } finally {
+        finalizingCallRef.current = false;
+
+        if (attempt.logged) {
+          callAttemptRef.current = null;
+        }
+
+        setElapsedSeconds(0);
+      }
+    },
+    [loadHistory, stopCallTimer]
+  );
+
+  // Start the billable duration only when Telnyx reports that the call
+  // is connected. Ringing time is never counted as talk time.
+  useEffect(() => {
+    const attempt = callAttemptRef.current;
+
+    if (status === "in-call" && attempt) {
+      if (!attempt.connectedAtMs) {
+        attempt.connectedAtMs = Date.now();
       }
 
       if (!timerRef.current) {
         timerRef.current = setInterval(() => {
-          if (callStartRef.current) {
-            setElapsedSeconds(Math.floor((Date.now() - callStartRef.current) / 1000));
+          const activeAttempt = callAttemptRef.current;
+
+          if (activeAttempt?.connectedAtMs) {
+            setElapsedSeconds(
+              Math.floor(
+                (Date.now() - activeAttempt.connectedAtMs) / 1000
+              )
+            );
           }
         }, 1000);
       }
-    } else {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
+    } else if (status !== "in-call") {
+      stopCallTimer();
+    }
+  }, [status, stopCallTimer]);
 
-      setElapsedSeconds(0);
+  // Detect a Telnyx transition from an active call state to a terminal state.
+  // This covers remote hangups, rejected/no-answer calls, failures, and calls
+  // ended from another device event.
+  useEffect(() => {
+    const previousStatus = previousStatusRef.current;
+    const wasActive =
+      previousStatus === "calling" || previousStatus === "in-call";
+    const isActive = status === "calling" || status === "in-call";
+
+    if (wasActive && !isActive && callAttemptRef.current) {
+      const terminalStatus =
+        callAttemptRef.current.connectedAtMs
+          ? "completed"
+          : status === "error" || status === "failed"
+          ? "failed"
+          : "no_answer";
+
+      finalizeCall(terminalStatus);
     }
 
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
+    previousStatusRef.current = status;
+  }, [status, finalizeCall]);
+
+  // Make a best effort to save an unfinished call if the page is closed.
+  useEffect(() => {
+    const handlePageHide = () => {
+      const attempt = callAttemptRef.current;
+      if (!attempt || attempt.logged) return;
+
+      const endedAtMs = Date.now();
+      const durationSeconds = attempt.connectedAtMs
+        ? Math.max(
+            0,
+            Math.floor((endedAtMs - attempt.connectedAtMs) / 1000)
+          )
+        : 0;
+
+      const token = localStorage.getItem("token");
+      const apiBase =
+        api?.defaults?.baseURL ||
+        "";
+
+      // sendBeacon cannot set Authorization headers. This is mainly useful
+      // when cookie authentication is active.
+      const blob = new Blob(
+        [
+          JSON.stringify({
+            call_session_id: attempt.id,
+            to: attempt.number,
+            to_name: attempt.toName || "",
+            direction: "outbound",
+            duration_seconds: durationSeconds,
+            status: attempt.connectedAtMs ? "completed" : "no_answer",
+            started_at: new Date(attempt.startedAtMs).toISOString(),
+            connected_at: attempt.connectedAtMs
+              ? new Date(attempt.connectedAtMs).toISOString()
+              : null,
+            ended_at: new Date(endedAtMs).toISOString(),
+            token_fallback: token || null,
+          }),
+        ],
+        { type: "application/json" }
+      );
+
+      if (navigator.sendBeacon && apiBase) {
+        navigator.sendBeacon(`${apiBase}/voice/call-log/beacon`, blob);
       }
     };
-  }, [status]);
 
-  useEffect(() => {
-    if (status === "ready" && callStartRef.current) {
-      const duration = Math.floor((Date.now() - callStartRef.current) / 1000);
-      const captured = number;
+    window.addEventListener("pagehide", handlePageHide);
 
-      callStartRef.current = null;
-      setElapsedSeconds(0);
-      hasConnectedRef.current = false;
-
-      api
-        .post("/voice/call-log", {
-          to: captured,
-          to_name: "",
-          direction: "outbound",
-          duration_seconds: duration,
-          status: "completed",
-        })
-        .then(loadHistory)
-        .catch(() => {});
-    }
-  }, [status, number]);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      stopCallTimer();
+    };
+  }, [stopCallTimer]);
 
   const updateNumber = (value) => {
     setNumber(value);
@@ -286,48 +426,51 @@ export default function Calls() {
       return;
     }
 
-    if (status !== "ready") return;
+    if (status !== "ready") {
+      toast.error("Calling is not ready yet. Please try again.");
+      return;
+    }
 
-    hasConnectedRef.current = false;
+    const callSessionId =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `call-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+    callAttemptRef.current = {
+      id: callSessionId,
+      number: target,
+      toName: "",
+      startedAtMs: Date.now(),
+      connectedAtMs: null,
+      logged: false,
+    };
+
+    previousStatusRef.current = status;
+    setElapsedSeconds(0);
 
     try {
       await makeCall(target);
-    } catch (_err) {
-      await api
-        .post("/voice/call-log", {
-          to: target,
-          to_name: "",
-          direction: "outbound",
-          duration_seconds: 0,
-          status: "failed",
-        })
-        .catch(() => {});
-
-      loadHistory();
+    } catch (err) {
+      console.error("Telnyx makeCall failed:", err);
+      await finalizeCall("failed");
+      toast.error("The call could not be started.");
     }
   };
 
-  const endCall = () => {
-    hangup();
+  const endCall = async () => {
+    const attempt = callAttemptRef.current;
 
-    const startedAt = callStartRef.current;
-    const duration = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
-    const wasConnected = hasConnectedRef.current;
+    try {
+      await hangup();
+    } catch (err) {
+      console.error("Telnyx hangup failed:", err);
+    }
 
-    callStartRef.current = null;
-    setElapsedSeconds(0);
-    hasConnectedRef.current = false;
-
-    api
-      .post("/voice/call-log", {
-        to: number,
-        to_name: "",
-        direction: "outbound",
-        duration_seconds: wasConnected ? duration : 0,
-        status: wasConnected ? "completed" : "no_answer",
-      })
-      .then(loadHistory)
-      .catch(() => {});
+    if (attempt) {
+      await finalizeCall(
+        attempt.connectedAtMs ? "completed" : "no_answer"
+      );
+    }
   };
 
   const handleAcceptIncoming = async () => {
@@ -516,15 +659,21 @@ export default function Calls() {
 
   const statusBadgeClasses = (s) => {
     if (s === "completed") return "bg-green-600 text-black";
-    if (s === "failed" || s === "billing_failed") return "bg-red-600 text-white";
+    if (s === "failed" || s === "billing_failed") {
+      return "bg-red-600 text-white";
+    }
     if (s === "no_answer") return "bg-yellow-500 text-black";
+    if (s === "cancelled") return "bg-neutral-300 text-black";
     return "bg-neutral-200 dark:bg-neutral-800 text-black dark:text-white";
   };
 
   const statusBadgeLabel = (s) => {
-    if (s === "no_answer") return "no answer";
-    if (s === "billing_failed") return "billing failed";
-    return s;
+    if (s === "no_answer") return "No answer";
+    if (s === "billing_failed") return "Billing failed";
+    if (s === "completed") return "Completed";
+    if (s === "failed") return "Failed";
+    if (s === "cancelled") return "Cancelled";
+    return s || "Unknown";
   };
 
   const tabButtonClasses = (tab) =>
@@ -809,8 +958,9 @@ export default function Calls() {
                 <div>
                   <p className="font-medium text-sm text-black dark:text-white">{h.to_name || h.to}</p>
                   <p className="text-xs text-neutral-500 mt-0.5">
-                    {new Date(h.created_at).toLocaleString()}
-                    {h.duration_seconds ? ` · ${Math.floor(h.duration_seconds / 60)}m ${h.duration_seconds % 60}s` : ""}
+                    {new Date(h.started_at || h.created_at).toLocaleString()}
+                    {" · "}
+                    {formatDuration(Number(h.duration_seconds || 0))}
                   </p>
                 </div>
 

@@ -1739,40 +1739,122 @@ async def voice_rate_quote(to: str, current=Depends(get_current_user)):
     }
 
 
-@api.post("/voice/call-log")
-async def log_call(payload: dict, current=Depends(get_current_user)):
+@api.get("/voice/call-history")
+async def get_call_history(
+    limit: int = 100,
+    current=Depends(get_current_user),
+):
+    """
+    Return the logged-in user's most recent calls.
+
+    This endpoint was missing previously even though the frontend requested it.
+    """
+    safe_limit = max(1, min(int(limit), 500))
+
+    items = await db.calls.find(
+        {"user_id": current["id"]},
+        {"_id": 0},
+    ).sort(
+        [("started_at", -1), ("created_at", -1)]
+    ).to_list(safe_limit)
+
+    return items
+
+
+async def save_call_log(payload: dict, current: dict) -> dict:
     to = (payload.get("to") or "").strip()
-    duration = max(0, min(int(payload.get("duration_seconds", 0) or 0), 4 * 60 * 60))
-    status_val = payload.get("status", "completed")
-    direction = payload.get("direction", "outbound")
+    if not to:
+        raise HTTPException(status_code=400, detail="Call number is required")
+
+    call_session_id = (
+        payload.get("call_session_id")
+        or payload.get("session_id")
+        or new_id()
+    )
+
+    # Idempotency: the browser may receive several end events for one call.
+    # Reusing the same call_session_id prevents duplicate history and billing.
+    existing = await db.calls.find_one(
+        {
+            "user_id": current["id"],
+            "call_session_id": call_session_id,
+        },
+        {"_id": 0},
+    )
+    if existing:
+        return existing
+
+    try:
+        duration = int(payload.get("duration_seconds", 0) or 0)
+    except (TypeError, ValueError):
+        duration = 0
+
+    duration = max(0, min(duration, 4 * 60 * 60))
+
+    allowed_statuses = {
+        "completed",
+        "no_answer",
+        "failed",
+        "cancelled",
+        "busy",
+        "rejected",
+        "billing_failed",
+    }
+    status_val = str(payload.get("status") or "completed").lower()
+    if status_val not in allowed_statuses:
+        status_val = "failed"
+
+    direction = str(payload.get("direction") or "outbound").lower()
+    if direction not in {"outbound", "inbound"}:
+        direction = "outbound"
+
+    started_at = payload.get("started_at") or now_iso()
+    connected_at = payload.get("connected_at")
+    ended_at = payload.get("ended_at") or now_iso()
 
     rate = await get_rate_for_number(to)
     rpm = float(rate.get("rate_per_minute", 0.0))
     cpm = float(rate.get("cost_per_minute", 0.0))
-    charge = round(rpm * (duration / 60.0), 4) if direction == "outbound" else 0.0
-    cost = round(cpm * (duration / 60.0), 4) if direction == "outbound" else 0.0
+
+    # Only connected, completed outbound calls are billable.
+    billable = (
+        direction == "outbound"
+        and status_val == "completed"
+        and duration > 0
+    )
+
+    charge = round(rpm * (duration / 60.0), 4) if billable else 0.0
+    cost = round(cpm * (duration / 60.0), 4) if billable else 0.0
     billed = False
 
     if charge > 0:
         result = await db.users.update_one(
-            {"id": current["id"], "wallet_balance": {"$gte": charge}},
+            {
+                "id": current["id"],
+                "wallet_balance": {"$gte": charge},
+            },
             {"$inc": {"wallet_balance": -charge}},
         )
         billed = result.modified_count == 1
+
         if not billed:
             status_val = "billing_failed"
 
     entry = {
         "id": new_id(),
+        "call_session_id": call_session_id,
         "provider": "telnyx",
         "user_id": current["id"],
         "user_name": current.get("name", ""),
         "user_email": current.get("email", ""),
         "to": to,
-        "to_name": payload.get("to_name", ""),
+        "to_name": (payload.get("to_name") or "").strip(),
         "direction": direction,
         "duration_seconds": duration,
         "status": status_val,
+        "started_at": started_at,
+        "connected_at": connected_at,
+        "ended_at": ended_at,
         "rate_per_minute": rpm,
         "cost_per_minute": cpm,
         "charge_amount": charge,
@@ -1783,9 +1865,75 @@ async def log_call(payload: dict, current=Depends(get_current_user)):
         "created_at": now_iso(),
     }
 
-    await db.calls.insert_one(entry)
+    try:
+        await db.calls.insert_one(entry)
+    except Exception as exc:
+        # A unique-index race means another request stored this same call.
+        duplicate = await db.calls.find_one(
+            {
+                "user_id": current["id"],
+                "call_session_id": call_session_id,
+            },
+            {"_id": 0},
+        )
+        if duplicate:
+            return duplicate
+
+        logger.exception("Could not store call log: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail="Could not store call history",
+        )
+
     entry.pop("_id", None)
     return entry
+
+
+@api.post("/voice/call-log")
+async def log_call(
+    payload: dict,
+    current=Depends(get_current_user),
+):
+    return await save_call_log(payload, current)
+
+
+@api.post("/voice/call-log/beacon")
+async def log_call_beacon(request: Request):
+    """
+    Best-effort page-close logger.
+
+    Cookies are preferred. token_fallback is accepted only because sendBeacon
+    cannot add an Authorization header.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid call log payload")
+
+    try:
+        current = await get_current_user(request)
+    except HTTPException:
+        token = payload.pop("token_fallback", None)
+        if not token:
+            raise
+
+        try:
+            decoded = pyjwt.decode(
+                token,
+                JWT_SECRET,
+                algorithms=[JWT_ALGO],
+            )
+            current = await db.users.find_one(
+                {"id": decoded["sub"]},
+                {"_id": 0, "password_hash": 0},
+            )
+        except Exception:
+            current = None
+
+        if not current:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+    return await save_call_log(payload, current)
 
 
 @api.post("/telnyx/texml")
@@ -2448,6 +2596,14 @@ async def on_startup():
     await db.password_reset_tokens.create_index("expires_at")
     await db.contacts.create_index([("user_id", 1), ("created_at", -1)])
     await db.contacts.create_index([("user_id", 1), ("number", 1)])
+    await db.calls.create_index(
+        [("user_id", 1), ("call_session_id", 1)],
+        unique=True,
+        sparse=True,
+    )
+    await db.calls.create_index(
+        [("user_id", 1), ("started_at", -1)]
+    )
     await db.payment_transactions.create_index("session_id", unique=True)
     await db.payment_transactions.create_index([("user_id", 1), ("created_at", -1)])
 
