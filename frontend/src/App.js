@@ -6,7 +6,6 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
-import ResetPassword from "@/pages/ResetPassword";
 import Home from "@/pages/Home";
 import Calls from "@/pages/Calls";
 import WalletPage from "@/pages/Wallet";
@@ -61,7 +60,6 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
-            <Route path="/reset-password" element={<ResetPassword />} />
 
             <Route path="/" element={<Navigate to="/home" replace />} />
 
