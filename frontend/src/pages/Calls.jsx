@@ -953,10 +953,13 @@ export default function Calls() {
             {history.map((h) => (
               <div
                 key={h.id}
-                className="rounded-xl p-4 flex items-center justify-between bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
+                className="rounded-xl p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
               >
-                <div>
-                  <p className="font-medium text-sm text-black dark:text-white">{h.to_name || h.to}</p>
+                <div className="min-w-0">
+                  <p className="font-medium text-sm text-black dark:text-white break-all">
+                    {h.to_name || h.to}
+                  </p>
+
                   <p className="text-xs text-neutral-500 mt-0.5">
                     {new Date(h.started_at || h.created_at).toLocaleString()}
                     {" · "}
@@ -964,9 +967,27 @@ export default function Calls() {
                   </p>
                 </div>
 
-                <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadgeClasses(h.status)}`}>
-                  {statusBadgeLabel(h.status)}
-                </span>
+                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadgeClasses(
+                      h.status
+                    )}`}
+                  >
+                    {statusBadgeLabel(h.status)}
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => dial(h.to)}
+                    disabled={isOnCall || status !== "ready"}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-green-600 text-black px-3 py-1.5 text-xs font-medium transition-opacity disabled:opacity-50"
+                    aria-label={`Call ${h.to_name || h.to} again`}
+                    data-testid={`redial-${h.id}`}
+                  >
+                    <Phone size={14} weight="fill" />
+                    Call again
+                  </button>
+                </div>
               </div>
             ))}
           </div>
