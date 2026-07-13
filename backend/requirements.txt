@@ -14,3 +14,4 @@ uvicorn==0.25.0
 resend
 qrcode[pil]==7.4.2
 Pillow==11.2.1
+httpx==0.28.1
