@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "@/lib/api";
-import { Plus, X, CalendarStar, UploadSimple } from "@phosphor-icons/react";
+import { Plus, X, CalendarStar, UploadSimple, MapPin } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import { useUserLocation } from "@/hooks/useUserLocation";
+import LocationPrompt from "@/components/LocationPrompt";
 
 export default function Events() {
   const navigate = useNavigate();
@@ -10,6 +12,7 @@ export default function Events() {
   const [showCreate, setShowCreate] = useState(false);
   const [busy, setBusy] = useState(false);
   const [selectedFileName, setSelectedFileName] = useState("");
+  const { location, status, requestLocation } = useUserLocation();
 
   const [form, setForm] = useState({
     title: "",
@@ -22,14 +25,28 @@ export default function Events() {
     image_url: "",
   });
 
-  const load = async () => {
-    const { data } = await api.get("/events");
+  const load = async (loc) => {
+    const params = {};
+    if (loc?.lat != null && loc?.lng != null) {
+      params.lat = loc.lat;
+      params.lng = loc.lng;
+    }
+    const { data } = await api.get("/events", { params });
     setEvents(data);
   };
 
   useEffect(() => {
     load().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Re-fetch, sorted by distance, once the user grants precise location.
+  useEffect(() => {
+    if (location?.lat != null && location?.lng != null) {
+      load(location).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location]);
 
   const handlePictureUpload = (e) => {
     const file = e.target.files?.[0];
@@ -69,7 +86,7 @@ export default function Events() {
         image_url: "",
       });
 
-      await load();
+      await load(location);
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Could not create event");
     } finally {
@@ -95,6 +112,8 @@ export default function Events() {
           <Plus size={16} weight="bold" /> Add event
         </button>
       </div>
+
+      <LocationPrompt status={status} onShare={requestLocation} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {events.length === 0 && (
@@ -143,7 +162,17 @@ export default function Events() {
                     {new Date(event.date_time).toLocaleDateString()}
                   </span>
 
-                  <span className="text-xs font-medium text-neutral-500">{remaining} left</span>
+                  <div className="flex items-center gap-2">
+                    {event.distance_km != null && (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-neutral-500">
+                        <MapPin size={12} weight="fill" />
+                        {event.distance_km < 1
+                          ? "< 1 km away"
+                          : `${event.distance_km} km away`}
+                      </span>
+                    )}
+                    <span className="text-xs font-medium text-neutral-500">{remaining} left</span>
+                  </div>
                 </div>
               </div>
             </button>

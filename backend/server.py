@@ -12,6 +12,8 @@ import jwt as pyjwt
 import random
 import secrets
 import hashlib
+import math
+import httpx
 import resend
 import smtplib
 from email.message import EmailMessage
@@ -807,6 +809,69 @@ async def ensure_topup_completed_email(tx: dict) -> None:
         )
 
 
+# ----- Geolocation helpers -----
+def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Great-circle distance between two points in kilometers."""
+    R = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lng2 - lng1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * R * math.asin(min(1, math.sqrt(a)))
+
+
+def get_request_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip", "")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else ""
+
+
+async def geolocate_ip(ip: str) -> Optional[dict]:
+    """
+    Best-effort IP geolocation using ipapi.co (no API key required for
+    low-volume use). Returns None on any failure so callers can proceed
+    without blocking on this.
+    """
+    if not ip or ip in ("127.0.0.1", "::1", "testclient"):
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as http_client:
+            resp = await http_client.get(f"https://ipapi.co/{ip}/json/")
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            if data.get("error"):
+                return None
+            lat = data.get("latitude")
+            lng = data.get("longitude")
+            return {
+                "country_code": data.get("country_code"),
+                "country_name": data.get("country_name"),
+                "city": data.get("city"),
+                "lat": float(lat) if lat is not None else None,
+                "lng": float(lng) if lng is not None else None,
+            }
+    except Exception:
+        logger.warning("IP geolocation failed for %s", ip)
+        return None
+
+
+def dial_code_to_iso(dial_code: str) -> str:
+    """Rough fallback mapping when a phone number is supplied without an
+    explicit country selection, based on the leading dial code."""
+    table = {
+        "+263": "ZW", "+27": "ZA", "+44": "GB", "+1": "US", "+61": "AU",
+        "+64": "NZ", "+353": "IE", "+31": "NL", "+49": "DE", "+33": "FR",
+        "+260": "ZM", "+265": "MW", "+267": "BW", "+268": "SZ", "+266": "LS",
+        "+254": "KE", "+255": "TZ", "+256": "UG", "+234": "NG", "+233": "GH",
+    }
+    return table.get(dial_code, "")
+
+
 # ----- Models -----
 class RegisterIn(BaseModel):
     email: EmailStr
@@ -822,6 +887,8 @@ class RegisterCodeRequestIn(BaseModel):
     password: str = Field(min_length=6)
     name: str = Field(min_length=1)
     phone: Optional[str] = ""
+    phone_country_iso: Optional[str] = ""
+    phone_dial_code: Optional[str] = ""
 
 class VerifyRegisterCodeIn(BaseModel):
     email: EmailStr
@@ -897,6 +964,10 @@ class ContactIn(BaseModel):
     name: Optional[str] = ""
     number: str = Field(min_length=1)
 
+class LocationUpdateIn(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
 
 # ----- Auth Endpoints -----
 @api.post("/auth/register/request-code")
@@ -915,6 +986,8 @@ async def request_register_code(data: RegisterCodeRequestIn):
             "name": data.name.strip(),
             "password_hash": hash_password(data.password),
             "phone": data.phone or "",
+            "phone_country_iso": (data.phone_country_iso or "").upper(),
+            "phone_dial_code": data.phone_dial_code or "",
         },
     )
     send_email_code(email, code, "register")
@@ -923,7 +996,7 @@ async def request_register_code(data: RegisterCodeRequestIn):
 
 
 @api.post("/auth/register/verify")
-async def verify_register_code(data: VerifyRegisterCodeIn, response: Response):
+async def verify_register_code(data: VerifyRegisterCodeIn, request: Request, response: Response):
     email = data.email.lower().strip()
 
     if await db.users.find_one({"email": email}):
@@ -933,6 +1006,13 @@ async def verify_register_code(data: VerifyRegisterCodeIn, response: Response):
     record = await verify_code(email, "register", data.code)
     extra = record.get("extra", {})
 
+    phone_dial_code = extra.get("phone_dial_code", "")
+    phone_country_iso = extra.get("phone_country_iso", "") or dial_code_to_iso(phone_dial_code)
+
+    # Best-effort IP geolocation as a fallback location signal. This never
+    # blocks or fails registration if the lookup does not succeed.
+    ip_info = await geolocate_ip(get_request_ip(request))
+
     user_id = new_id()
     user = {
         "id": user_id,
@@ -940,12 +1020,23 @@ async def verify_register_code(data: VerifyRegisterCodeIn, response: Response):
         "name": extra.get("name", "User"),
         "password_hash": extra.get("password_hash"),
         "phone": extra.get("phone", ""),
+        "phone_dial_code": phone_dial_code,
+        "phone_country_iso": phone_country_iso,
         "avatar_url": "",
         "wallet_balance": 0.0,
         "is_admin": False,
         "is_verified_seller": False,
         "account_status": "active",
         "email_verified": True,
+        # Location fields. lat/lng are filled by the GPS prompt once the
+        # user grants permission; until then we fall back to IP-based
+        # country/city, and phone_country_iso as a last resort.
+        "lat": (ip_info or {}).get("lat"),
+        "lng": (ip_info or {}).get("lng"),
+        "location_country": (ip_info or {}).get("country_code") or phone_country_iso or "",
+        "location_city": (ip_info or {}).get("city") or "",
+        "location_source": "ip" if ip_info else ("phone_country" if phone_country_iso else "none"),
+        "location_updated_at": now_iso(),
         "created_at": now_iso(),
     }
 
@@ -1117,6 +1208,35 @@ async def me(current=Depends(get_current_user)):
 async def list_users(current=Depends(get_current_user)):
     users = await db.users.find({"id": {"$ne": current["id"]}}, {"_id": 0, "password_hash": 0}).to_list(200)
     return users
+
+
+@api.post("/users/location")
+async def update_user_location(data: LocationUpdateIn, current=Depends(get_current_user)):
+    """
+    Called by the browser once the user grants GPS permission. This is the
+    most precise location signal and takes priority over IP/phone country
+    for proximity sorting.
+    """
+    await db.users.update_one(
+        {"id": current["id"]},
+        {"$set": {
+            "lat": data.lat,
+            "lng": data.lng,
+            "location_source": "gps",
+            "location_updated_at": now_iso(),
+        }},
+    )
+    user = await db.users.find_one({"id": current["id"]}, {"_id": 0, "password_hash": 0})
+    return user
+
+
+@api.get("/users/location")
+async def get_user_location(current=Depends(get_current_user)):
+    user = await db.users.find_one(
+        {"id": current["id"]},
+        {"_id": 0, "lat": 1, "lng": 1, "location_country": 1, "location_city": 1, "location_source": 1},
+    )
+    return user or {}
 
 
 # ----- Wallet -----
@@ -1439,6 +1559,12 @@ async def create_listing(data: ListingIn, current=Depends(get_current_user)):
         "seller_id": current["id"],
         "seller_name": current["name"],
         "seller_email": current["email"],
+        # Tagged from the seller's own stored location at time of posting so
+        # buyers can be shown listings closest to them first.
+        "lat": current.get("lat"),
+        "lng": current.get("lng"),
+        "location_country": current.get("location_country", ""),
+        "location_city": current.get("location_city", ""),
         "created_at": now_iso(),
     }
     await db.listings.insert_one(listing)
@@ -1446,7 +1572,12 @@ async def create_listing(data: ListingIn, current=Depends(get_current_user)):
     return listing
 
 @api.get("/marketplace/listings")
-async def get_listings(category: Optional[str] = None, q: Optional[str] = None):
+async def get_listings(
+    category: Optional[str] = None,
+    q: Optional[str] = None,
+    lat: Optional[float] = None,
+    lng: Optional[float] = None,
+):
     query = {}
     if category and category != "all":
         query["category"] = category
@@ -1456,6 +1587,19 @@ async def get_listings(category: Optional[str] = None, q: Optional[str] = None):
             {"description": {"$regex": q, "$options": "i"}},
         ]
     items = await db.listings.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+    if lat is not None and lng is not None:
+        def distance(item):
+            ilat, ilng = item.get("lat"), item.get("lng")
+            if ilat is None or ilng is None:
+                return float("inf")
+            return haversine_km(lat, lng, ilat, ilng)
+
+        for item in items:
+            d = distance(item)
+            item["distance_km"] = round(d, 1) if d != float("inf") else None
+        items.sort(key=lambda it: it["distance_km"] if it["distance_km"] is not None else float("inf"))
+
     return items
 
 @api.get("/marketplace/listings/{listing_id}")
@@ -1605,6 +1749,11 @@ async def create_event(data: EventIn, current=Depends(get_current_user)):
         "organizer_id": current["id"],
         "organizer_name": current["name"],
         "organizer_email": current["email"],
+        # Tagged from the organizer's own stored location at time of posting
+        # so attendees can be shown events closest to them first.
+        "lat": current.get("lat"),
+        "lng": current.get("lng"),
+        "location_country": current.get("location_country", ""),
         "created_at": now_iso(),
     }
     await db.events.insert_one(event)
@@ -1613,8 +1762,21 @@ async def create_event(data: EventIn, current=Depends(get_current_user)):
 
 
 @api.get("/events")
-async def list_events():
+async def list_events(lat: Optional[float] = None, lng: Optional[float] = None):
     events = await db.events.find({}, {"_id": 0}).sort("date_time", 1).to_list(300)
+
+    if lat is not None and lng is not None:
+        def distance(item):
+            ilat, ilng = item.get("lat"), item.get("lng")
+            if ilat is None or ilng is None:
+                return float("inf")
+            return haversine_km(lat, lng, ilat, ilng)
+
+        for event in events:
+            d = distance(event)
+            event["distance_km"] = round(d, 1) if d != float("inf") else None
+        events.sort(key=lambda ev: ev["distance_km"] if ev["distance_km"] is not None else float("inf"))
+
     return events
 
 
@@ -2596,6 +2758,8 @@ async def on_startup():
     await db.password_reset_tokens.create_index("expires_at")
     await db.contacts.create_index([("user_id", 1), ("created_at", -1)])
     await db.contacts.create_index([("user_id", 1), ("number", 1)])
+    await db.listings.create_index([("lat", 1), ("lng", 1)])
+    await db.events.create_index([("lat", 1), ("lng", 1)])
     # Clean explicit null values from legacy call records.
     await db.calls.update_many(
         {"call_session_id": None},

@@ -5,20 +5,31 @@ import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import logo from "@/Assets/logo.png";
 import TermsModal from "@/components/TermsModal";
+import CountryCodeSelect, { COUNTRIES } from "@/components/CountryCodeSelect";
+import { useUserLocation } from "@/hooks/useUserLocation";
+
+const ZIMBABWE = COUNTRIES.find((c) => c.iso2 === "ZW");
 
 export default function Register() {
   const { refresh } = useAuth();
   const navigate = useNavigate();
+  const { requestLocation } = useUserLocation();
 
   const [step, setStep] = useState("details");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [phone, setPhone] = useState("");
+  const [country, setCountry] = useState(ZIMBABWE);
+  const [phoneLocal, setPhoneLocal] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
+
+  const fullPhone = () => {
+    const digits = phoneLocal.replace(/\D/g, "");
+    return digits ? `${country.dial}${digits}` : "";
+  };
 
   const requestCode = async (e) => {
     e.preventDefault();
@@ -35,7 +46,9 @@ export default function Register() {
         name,
         email,
         password,
-        phone,
+        phone: fullPhone(),
+        phone_country_iso: country.iso2,
+        phone_dial_code: country.dial,
       });
 
       toast.success("Verification code sent to your email");
@@ -62,6 +75,13 @@ export default function Register() {
       await refresh();
 
       toast.success("Account verified and created!");
+
+      // Best-effort: ask for precise GPS location right after signup so
+      // marketplace/job/event results can be sorted by distance from the
+      // start. If denied or unsupported, the account still has an IP-based
+      // and phone-country fallback location saved from registration.
+      requestLocation();
+
       navigate("/home", { replace: true });
     } catch (err) {
       const msg = err?.response?.data?.detail || "Verification failed";
@@ -79,7 +99,9 @@ export default function Register() {
         name,
         email,
         password,
-        phone,
+        phone: fullPhone(),
+        phone_country_iso: country.iso2,
+        phone_dial_code: country.dial,
       });
 
       toast.success("New code sent");
@@ -138,15 +160,36 @@ export default function Register() {
 
             <div>
               <label className="text-xs uppercase text-neutral-500">
+                Country
+              </label>
+              <div className="mt-2">
+                <CountryCodeSelect value={country} onChange={setCountry} />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs uppercase text-neutral-500">
                 Phone number
               </label>
-              <input
-                type="tel"
-                className="w-full mt-2 h-11 rounded-lg px-3 bg-white border border-neutral-200 text-black outline-none focus:border-green-600"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="+263..."
-              />
+              <div className="flex gap-2 mt-2">
+                <div className="h-11 px-3 rounded-lg bg-neutral-200 border border-neutral-200 text-black flex items-center text-sm font-medium">
+                  {country.dial}
+                </div>
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  className="flex-1 h-11 rounded-lg px-3 bg-white border border-neutral-200 text-black outline-none focus:border-green-600"
+                  value={phoneLocal}
+                  onChange={(e) =>
+                    setPhoneLocal(e.target.value.replace(/[^\d]/g, ""))
+                  }
+                  placeholder="771234567"
+                />
+              </div>
+              <p className="text-[11px] text-neutral-400 mt-1">
+                We use this to help match you with people and listings near
+                you.
+              </p>
             </div>
 
             <div>

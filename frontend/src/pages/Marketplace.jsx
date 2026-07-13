@@ -12,6 +12,8 @@ import {
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
+import { useUserLocation } from "@/hooks/useUserLocation";
+import LocationPrompt from "@/components/LocationPrompt";
 
 const COUNTRIES = [
   "United States",
@@ -118,13 +120,18 @@ export default function Marketplace() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [previews, setPreviews] = useState([]);
   const [busy, setBusy] = useState(false);
+  const { location, status, requestLocation } = useUserLocation();
 
   const load = useCallback(
-    async (cat = filter, query = q) => {
+    async (cat = filter, query = q, loc = location) => {
       try {
         const params = {};
         if (cat !== "all") params.category = cat;
         if (query.trim()) params.q = query.trim();
+        if (loc?.lat != null && loc?.lng != null) {
+          params.lat = loc.lat;
+          params.lng = loc.lng;
+        }
 
         const { data } = await api.get("/marketplace/listings", { params });
         setItems(Array.isArray(data) ? data : []);
@@ -132,12 +139,23 @@ export default function Marketplace() {
         toast.error("Could not load listings");
       }
     },
+    // location intentionally excluded here — see the dedicated effect below,
+    // which re-runs load() once GPS permission is granted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [filter, q]
   );
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Re-fetch, sorted nearest-first, once the user grants precise location.
+  useEffect(() => {
+    if (location?.lat != null && location?.lng != null) {
+      load(filter, q, location);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location]);
 
   const updateForm = (field, value) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -291,7 +309,7 @@ export default function Marketplace() {
 
   const search = (e) => {
     e.preventDefault();
-    load(filter, q);
+    load(filter, q, location);
   };
 
   const getImages = (item) => {
@@ -314,6 +332,9 @@ export default function Marketplace() {
 
   const getLocation = (item) =>
     [item.city, item.state, item.country].filter(Boolean).join(", ");
+
+  const formatDistance = (km) =>
+    km < 1 ? "< 1 km away" : `${km} km away`;
 
   return (
     <div className="space-y-5 md:space-y-6" data-testid="marketplace-page">
@@ -343,6 +364,8 @@ export default function Marketplace() {
           <Plus size={16} weight="bold" /> New post
         </button>
       </div>
+
+      <LocationPrompt status={status} onShare={requestLocation} />
 
       <form onSubmit={search} className="flex gap-2">
         <div className="flex-1 relative">
@@ -382,7 +405,7 @@ export default function Marketplace() {
             type="button"
             onClick={() => {
               setFilter(tab.key);
-              load(tab.key, q);
+              load(tab.key, q, location);
             }}
             data-testid={`market-filter-${tab.key}`}
             className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
@@ -409,7 +432,7 @@ export default function Marketplace() {
         {items.map((item) => {
           const imgs = getImages(item);
           const isJob = item.category === "jobs";
-          const location = getLocation(item);
+          const itemLocation = getLocation(item);
 
           return (
             <Link
@@ -478,10 +501,10 @@ export default function Marketplace() {
                   </span>
                 </div>
 
-                {isJob && location && (
+                {isJob && itemLocation && (
                   <p className="mt-3 flex items-center gap-1 text-xs text-neutral-500 line-clamp-1">
                     <MapPin size={14} weight="fill" />
-                    {location}
+                    {itemLocation}
                   </p>
                 )}
 
@@ -494,12 +517,21 @@ export default function Marketplace() {
                     {item.category}
                   </span>
 
-                  {imgs.length > 0 && (
-                    <span className="flex items-center gap-1 text-xs font-medium text-neutral-400">
-                      <Image size={13} weight="bold" />
-                      {imgs.length}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {item.distance_km != null && (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-neutral-500">
+                        <MapPin size={12} weight="fill" />
+                        {formatDistance(item.distance_km)}
+                      </span>
+                    )}
+
+                    {imgs.length > 0 && (
+                      <span className="flex items-center gap-1 text-xs font-medium text-neutral-400">
+                        <Image size={13} weight="bold" />
+                        {imgs.length}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             </Link>
