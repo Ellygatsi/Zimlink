@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import api from "@/lib/api";
 import {
@@ -119,18 +119,18 @@ export default function MarketplaceDetail() {
     city: "",
   });
 
-  useEffect(() => {
-    const loadItem = async () => {
-      try {
-        const { data } = await api.get(`/marketplace/listings/${id}`);
-        setItem(data);
-      } catch {
-        navigate("/marketplace");
-      }
-    };
-
-    loadItem();
+  const loadItem = useCallback(async () => {
+    try {
+      const { data } = await api.get(`/marketplace/listings/${id}`);
+      setItem(data);
+    } catch {
+      navigate("/marketplace");
+    }
   }, [id, navigate]);
+
+  useEffect(() => {
+    loadItem();
+  }, [loadItem]);
 
   const isJob = item?.category === "jobs";
   const isOwner = Boolean(
