@@ -11,6 +11,7 @@ import {
   MapPin,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import { useAuth } from "@/context/AuthContext";
 
 const COUNTRIES = [
   "United States",
@@ -109,6 +110,7 @@ const EMPTY_FORM = {
 };
 
 export default function Marketplace() {
+  const { user } = useAuth();
   const [items, setItems] = useState([]);
   const [filter, setFilter] = useState("all");
   const [q, setQ] = useState("");
@@ -266,7 +268,11 @@ export default function Marketplace() {
       await api.post("/marketplace/listings", payload);
 
       toast.success(
-        isJob
+        user?.is_verified
+          ? isJob
+            ? "Your job is now live."
+            : "Your listing is now live."
+          : isJob
           ? "Job submitted for admin approval"
           : "Listing submitted for admin approval"
       );
@@ -322,7 +328,9 @@ export default function Marketplace() {
           </h1>
 
           <p className="text-sm text-neutral-500 mt-2">
-            Only verified users can post. New listings are reviewed before going live.
+            {user?.is_verified
+              ? "Verified users can publish goods, services and jobs immediately."
+              : "Your posts will be reviewed before going live."}
           </p>
         </div>
 
@@ -516,7 +524,9 @@ export default function Marketplace() {
                   New post
                 </h2>
                 <p className="text-xs text-neutral-500 mt-1">
-                  Your post will go live after admin approval.
+                  {user?.is_verified
+                    ? "Your post will be published immediately."
+                    : "Your post will go live after admin approval."}
                 </p>
               </div>
 
