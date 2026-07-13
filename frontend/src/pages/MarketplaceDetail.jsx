@@ -119,18 +119,18 @@ export default function MarketplaceDetail() {
     city: "",
   });
 
-  const loadItem = async () => {
-    try {
-      const { data } = await api.get(`/marketplace/listings/${id}`);
-      setItem(data);
-    } catch {
-      navigate("/marketplace");
-    }
-  };
-
   useEffect(() => {
+    const loadItem = async () => {
+      try {
+        const { data } = await api.get(`/marketplace/listings/${id}`);
+        setItem(data);
+      } catch {
+        navigate("/marketplace");
+      }
+    };
+
     loadItem();
-  }, [id]);
+  }, [id, navigate]);
 
   const isJob = item?.category === "jobs";
   const isOwner = Boolean(
