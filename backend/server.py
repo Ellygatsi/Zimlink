@@ -872,6 +872,73 @@ def dial_code_to_iso(dial_code: str) -> str:
     return table.get(dial_code, "")
 
 
+def currency_for_country(country_code: str) -> str:
+    """Return the default display currency for a country code."""
+    table = {
+        "US": "USD", "ZW": "USD", "GB": "GBP", "ZA": "ZAR",
+        "CA": "CAD", "AU": "AUD", "NZ": "NZD", "BW": "BWP",
+        "ZM": "ZMW", "MZ": "MZN", "NA": "NAD", "MW": "MWK",
+        "KE": "KES", "TZ": "TZS", "GH": "GHS", "NG": "NGN",
+        "UG": "UGX", "RW": "RWF", "IE": "EUR", "DE": "EUR",
+        "FR": "EUR", "NL": "EUR", "AE": "AED",
+    }
+    return table.get((country_code or "").upper(), "USD")
+
+
+async def reverse_geocode_gps(lat: float, lng: float) -> Optional[dict]:
+    """Convert GPS coordinates into country, state, and city."""
+    try:
+        headers = {
+            "User-Agent": os.environ.get(
+                "NOMINATIM_USER_AGENT",
+                "ZimLink/1.0 (info@zimlink.me)",
+            )
+        }
+        params = {
+            "lat": lat,
+            "lon": lng,
+            "format": "jsonv2",
+            "addressdetails": 1,
+            "zoom": 18,
+        }
+
+        async with httpx.AsyncClient(timeout=8.0, headers=headers) as http_client:
+            response = await http_client.get(
+                "https://nominatim.openstreetmap.org/reverse",
+                params=params,
+            )
+
+        if response.status_code != 200:
+            logger.warning("Reverse geocoding returned HTTP %s", response.status_code)
+            return None
+
+        payload = response.json()
+        address = payload.get("address") or {}
+        city = (
+            address.get("city")
+            or address.get("town")
+            or address.get("village")
+            or address.get("municipality")
+            or address.get("county")
+            or ""
+        )
+
+        return {
+            "country": address.get("country") or "",
+            "country_code": (address.get("country_code") or "").upper(),
+            "state": (
+                address.get("state")
+                or address.get("region")
+                or address.get("state_district")
+                or ""
+            ),
+            "city": city,
+        }
+    except Exception as exc:
+        logger.warning("Reverse geocoding failed: %s", exc)
+        return None
+
+
 # ----- Models -----
 class RegisterIn(BaseModel):
     email: EmailStr
@@ -967,6 +1034,7 @@ class ContactIn(BaseModel):
 class LocationUpdateIn(BaseModel):
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
+    timezone: Optional[str] = ""
 
 
 # ----- Auth Endpoints -----
@@ -1211,22 +1279,80 @@ async def list_users(current=Depends(get_current_user)):
 
 
 @api.post("/users/location")
-async def update_user_location(data: LocationUpdateIn, current=Depends(get_current_user)):
-    """
-    Called by the browser once the user grants GPS permission. This is the
-    most precise location signal and takes priority over IP/phone country
-    for proximity sorting.
-    """
+async def update_user_location(
+    data: LocationUpdateIn,
+    current=Depends(get_current_user),
+):
+    """Save GPS coordinates and a readable location profile."""
+    geocoded = await reverse_geocode_gps(data.lat, data.lng)
+
+    existing_country_code = (
+        current.get("location_country_code")
+        or current.get("location_country")
+        or ""
+    )
+    existing_country_name = current.get("location_country_name") or ""
+    existing_state = current.get("location_state") or ""
+    existing_city = current.get("location_city") or ""
+
+    country_code = (
+        (geocoded or {}).get("country_code")
+        or existing_country_code
+    ).upper()
+    country_name = (
+        (geocoded or {}).get("country")
+        or existing_country_name
+    )
+    state_name = (
+        (geocoded or {}).get("state")
+        or existing_state
+    )
+    city_name = (
+        (geocoded or {}).get("city")
+        or existing_city
+    )
+    timezone_name = (data.timezone or "").strip()
+    currency = currency_for_country(country_code)
+    updated_at = now_iso()
+
+    location_profile = {
+        "country": country_name,
+        "country_code": country_code,
+        "state": state_name,
+        "city": city_name,
+        "currency": currency,
+        "timezone": timezone_name,
+        "lat": data.lat,
+        "lng": data.lng,
+        "source": "gps",
+        "updated_at": updated_at,
+    }
+
     await db.users.update_one(
         {"id": current["id"]},
-        {"$set": {
-            "lat": data.lat,
-            "lng": data.lng,
-            "location_source": "gps",
-            "location_updated_at": now_iso(),
-        }},
+        {
+            "$set": {
+                "location": location_profile,
+                "lat": data.lat,
+                "lng": data.lng,
+                "location_country": country_code,
+                "location_country_code": country_code,
+                "location_country_name": country_name,
+                "location_state": state_name,
+                "location_city": city_name,
+                "location_currency": currency,
+                "location_timezone": timezone_name,
+                "location_source": "gps",
+                "location_updated_at": updated_at,
+                "updated_at": updated_at,
+            }
+        },
     )
-    user = await db.users.find_one({"id": current["id"]}, {"_id": 0, "password_hash": 0})
+
+    user = await db.users.find_one(
+        {"id": current["id"]},
+        {"_id": 0, "password_hash": 0},
+    )
     return user
 
 
@@ -1234,7 +1360,21 @@ async def update_user_location(data: LocationUpdateIn, current=Depends(get_curre
 async def get_user_location(current=Depends(get_current_user)):
     user = await db.users.find_one(
         {"id": current["id"]},
-        {"_id": 0, "lat": 1, "lng": 1, "location_country": 1, "location_city": 1, "location_source": 1},
+        {
+            "_id": 0,
+            "location": 1,
+            "lat": 1,
+            "lng": 1,
+            "location_country": 1,
+            "location_country_code": 1,
+            "location_country_name": 1,
+            "location_state": 1,
+            "location_city": 1,
+            "location_currency": 1,
+            "location_timezone": 1,
+            "location_source": 1,
+            "location_updated_at": 1,
+        },
     )
     return user or {}
 

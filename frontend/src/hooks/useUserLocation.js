@@ -4,13 +4,9 @@ import api from "@/lib/api";
 const STORAGE_KEY = "zimlink_location_prompt_dismissed";
 
 /**
- * Captures the user's precise GPS location on request, saves it to the
- * backend (which takes priority over IP/phone-country signals for
- * proximity sorting), and exposes it for use in "closest to you" queries.
- *
- * Usage:
- *   const { location, status, requestLocation } = useUserLocation();
- *   ...fetch(`/api/marketplace/listings?lat=${location.lat}&lng=${location.lng}`)
+ * Gets the user's GPS location and sends it to the backend.
+ * The backend will reverse-geocode it into:
+ * country, state, city, currency and timezone.
  */
 export function useUserLocation({ auto = false } = {}) {
   const [location, setLocation] = useState(null);
@@ -18,40 +14,85 @@ export function useUserLocation({ auto = false } = {}) {
   const [error, setError] = useState("");
 
   const requestLocation = useCallback(() => {
-    if (!("geolocation" in navigator)) {
+    if (!navigator.geolocation) {
       setStatus("unsupported");
+      setError("Location services are not supported by this browser.");
       return;
     }
 
     setStatus("requesting");
+    setError("");
 
     navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        const { latitude, longitude } = pos.coords;
-        setLocation({ lat: latitude, lng: longitude, source: "gps" });
-        setStatus("granted");
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+
+        const timezone =
+          Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+
+        const localLocation = {
+          lat: latitude,
+          lng: longitude,
+          timezone,
+          source: "gps",
+        };
+
+        setLocation(localLocation);
 
         try {
-          await api.post("/users/location", { lat: latitude, lng: longitude });
-        } catch {
-          // Non-fatal — the coordinates are still usable client-side for
-          // this session even if saving to the profile fails.
+          const { data } = await api.post("/users/location", {
+            lat: latitude,
+            lng: longitude,
+            timezone,
+          });
+
+          if (data.location) {
+            setLocation(data.location);
+          }
+
+          setStatus("granted");
+        } catch (err) {
+          console.error(err);
+
+          setStatus("granted");
+
+          setError(
+            "Location detected but could not be saved to your account."
+          );
         }
       },
       (err) => {
         setStatus("denied");
-        setError(err.message || "Location permission was denied");
+
+        switch (err.code) {
+          case err.PERMISSION_DENIED:
+            setError("Location permission denied.");
+            break;
+
+          case err.POSITION_UNAVAILABLE:
+            setError("Location unavailable.");
+            break;
+
+          case err.TIMEOUT:
+            setError("Location request timed out.");
+            break;
+
+          default:
+            setError(err.message || "Could not determine location.");
+        }
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 5 * 60 * 1000 }
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 300000,
+      }
     );
   }, []);
 
   const dismiss = useCallback(() => {
     try {
       localStorage.setItem(STORAGE_KEY, "1");
-    } catch {
-      // ignore storage errors (e.g. private browsing)
-    }
+    } catch {}
   }, []);
 
   const wasDismissed = useCallback(() => {
@@ -63,9 +104,17 @@ export function useUserLocation({ auto = false } = {}) {
   }, []);
 
   useEffect(() => {
-    if (auto) requestLocation();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auto]);
+    if (auto) {
+      requestLocation();
+    }
+  }, [auto, requestLocation]);
 
-  return { location, status, error, requestLocation, dismiss, wasDismissed };
+  return {
+    location,
+    status,
+    error,
+    requestLocation,
+    dismiss,
+    wasDismissed,
+  };
 }
