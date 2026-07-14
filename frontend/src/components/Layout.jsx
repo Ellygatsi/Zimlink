@@ -1,4 +1,3 @@
-```jsx
 import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
@@ -95,6 +94,26 @@ export default function Layout({ children }) {
 
   const navItems = user?.is_admin ? [...NAV, ...ADMIN_NAV] : NAV;
 
+  const sidebarClasses = [
+    "fixed",
+    "top-0",
+    "left-0",
+    "z-50",
+    "h-screen",
+    "w-72",
+    "bg-white",
+    "dark:bg-neutral-950",
+    "border-r",
+    "border-neutral-200",
+    "dark:border-neutral-800",
+    "transform",
+    "transition-transform",
+    "duration-300",
+    "flex",
+    "flex-col",
+    sidebarOpen ? "translate-x-0" : "-translate-x-full",
+  ].join(" ");
+
   return (
     <div className="min-h-screen bg-white dark:bg-black text-black dark:text-white transition-colors">
       <header className="sticky top-0 z-40 bg-white dark:bg-black border-b border-neutral-200 dark:border-neutral-800 px-3 py-2 md:px-5 md:py-3 flex items-center justify-between">
@@ -126,17 +145,15 @@ export default function Layout({ children }) {
       </header>
 
       {sidebarOpen && (
-        <div
+        <button
+          type="button"
+          aria-label="Close navigation menu"
           className="fixed inset-0 bg-black/60 z-40"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
-      <aside
-        className={`fixed top-0 left-0 z-50 h-screen w-72 bg-white dark:bg-neutral-950 border-r border-neutral-200 dark:border-neutral-800 transform transition-transform duration-300 ${
-          sidebarOpen ? "translate-x-0" : "-translate-x-full"
-        } flex flex-col`}
-      >
+      <aside className={sidebarClasses}>
         <div className="flex items-center justify-between p-5 border-b border-neutral-200 dark:border-neutral-800">
           <button
             type="button"
@@ -230,8 +247,8 @@ export default function Layout({ children }) {
           {locationStatus === "denied" && (
             <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-3">
               <p className="text-xs text-amber-800 dark:text-amber-300">
-                Location permission was not granted. You can enable it from
-                your browser's site settings.
+                Location permission was not granted. Enable it in your
+                browser site settings.
               </p>
 
               <button
@@ -256,11 +273,8 @@ export default function Layout({ children }) {
       </aside>
 
       <main className="min-h-screen">
-        <div className="max-w-6xl mx-auto p-4 md:p-8">
-          {children}
-        </div>
+        <div className="max-w-6xl mx-auto p-4 md:p-8">{children}</div>
       </main>
     </div>
   );
 }
-```
