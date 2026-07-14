@@ -1,4 +1,5 @@
-import { useState } from "react";
+```jsx
+import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
   House,
@@ -19,6 +20,9 @@ import {
 } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
+import { useUserLocation } from "@/hooks/useUserLocation";
+
+const LOCATION_SESSION_KEY = "zimlink_location_requested_this_session";
 
 const NAV = [
   { to: "/home", label: "Home", icon: House },
@@ -40,9 +44,51 @@ export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  const {
+    requestLocation,
+    status: locationStatus,
+    error: locationError,
+  } = useUserLocation();
+
+  useEffect(() => {
+    if (!user) return;
+
+    let alreadyRequested = false;
+
+    try {
+      alreadyRequested =
+        sessionStorage.getItem(LOCATION_SESSION_KEY) === "1";
+    } catch {
+      alreadyRequested = false;
+    }
+
+    if (alreadyRequested) return;
+
+    try {
+      sessionStorage.setItem(LOCATION_SESSION_KEY, "1");
+    } catch {
+      // Continue even if session storage is unavailable.
+    }
+
+    requestLocation();
+  }, [user, requestLocation]);
+
+  useEffect(() => {
+    if (locationStatus === "denied" && locationError) {
+      console.warn("ZimLink location permission:", locationError);
+    }
+  }, [locationStatus, locationError]);
+
   const handleLogout = async () => {
+    try {
+      sessionStorage.removeItem(LOCATION_SESSION_KEY);
+    } catch {
+      // Ignore storage errors.
+    }
+
     await logout();
     navigate("/login");
   };
@@ -53,13 +99,16 @@ export default function Layout({ children }) {
     <div className="min-h-screen bg-white dark:bg-black text-black dark:text-white transition-colors">
       <header className="sticky top-0 z-40 bg-white dark:bg-black border-b border-neutral-200 dark:border-neutral-800 px-3 py-2 md:px-5 md:py-3 flex items-center justify-between">
         <button
+          type="button"
           onClick={() => setSidebarOpen(true)}
           className="text-black dark:text-white"
+          aria-label="Open navigation menu"
         >
           <List size={22} weight="bold" />
         </button>
 
         <button
+          type="button"
           onClick={() => navigate("/home")}
           className="text-lg font-bold text-green-600"
         >
@@ -67,8 +116,10 @@ export default function Layout({ children }) {
         </button>
 
         <button
+          type="button"
           onClick={() => navigate("/profile")}
           className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-green-600 flex items-center justify-center text-black font-bold"
+          aria-label="Open profile"
         >
           {user?.name?.[0]?.toUpperCase() || "U"}
         </button>
@@ -88,15 +139,21 @@ export default function Layout({ children }) {
       >
         <div className="flex items-center justify-between p-5 border-b border-neutral-200 dark:border-neutral-800">
           <button
-            onClick={() => navigate("/home")}
+            type="button"
+            onClick={() => {
+              navigate("/home");
+              setSidebarOpen(false);
+            }}
             className="text-xl font-bold text-green-600"
           >
             ZimLink
           </button>
 
           <button
+            type="button"
             onClick={() => setSidebarOpen(false)}
             className="text-neutral-500"
+            aria-label="Close navigation menu"
           >
             <X size={22} weight="bold" />
           </button>
@@ -126,15 +183,26 @@ export default function Layout({ children }) {
         <div className="border-t border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              {isDark ? <Moon size={18} weight="bold" /> : <Sun size={18} weight="bold" />}
-              <span className="text-sm">{isDark ? "Dark Mode" : "Light Mode"}</span>
+              {isDark ? (
+                <Moon size={18} weight="bold" />
+              ) : (
+                <Sun size={18} weight="bold" />
+              )}
+
+              <span className="text-sm">
+                {isDark ? "Dark Mode" : "Light Mode"}
+              </span>
             </div>
 
             <button
+              type="button"
               onClick={toggleTheme}
               className={`w-11 h-6 rounded-full flex items-center px-1 ${
-                isDark ? "justify-end bg-green-600" : "justify-start bg-neutral-300"
+                isDark
+                  ? "justify-end bg-green-600"
+                  : "justify-start bg-neutral-300"
               }`}
+              aria-label="Toggle theme"
             >
               <div className="w-4 h-4 rounded-full bg-white" />
             </button>
@@ -147,11 +215,37 @@ export default function Layout({ children }) {
 
             <div className="flex-1 overflow-hidden">
               <p className="font-semibold truncate">{user?.name}</p>
-              <p className="text-xs text-neutral-500 truncate">{user?.email}</p>
+              <p className="text-xs text-neutral-500 truncate">
+                {user?.email}
+              </p>
             </div>
           </div>
 
+          {locationStatus === "requesting" && (
+            <p className="text-xs text-neutral-500">
+              Detecting your location…
+            </p>
+          )}
+
+          {locationStatus === "denied" && (
+            <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-3">
+              <p className="text-xs text-amber-800 dark:text-amber-300">
+                Location permission was not granted. You can enable it from
+                your browser's site settings.
+              </p>
+
+              <button
+                type="button"
+                onClick={requestLocation}
+                className="mt-2 text-xs font-semibold text-green-700 dark:text-green-500"
+              >
+                Try again
+              </button>
+            </div>
+          )}
+
           <button
+            type="button"
             onClick={handleLogout}
             className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-900"
           >
@@ -162,8 +256,11 @@ export default function Layout({ children }) {
       </aside>
 
       <main className="min-h-screen">
-        <div className="max-w-6xl mx-auto p-4 md:p-8">{children}</div>
+        <div className="max-w-6xl mx-auto p-4 md:p-8">
+          {children}
+        </div>
       </main>
     </div>
   );
 }
+```
