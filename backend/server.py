@@ -28,8 +28,9 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Respons
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
-import asyncio
-from pesepay import Pesepay
+import json
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
 
 
 # ----- Setup -----
@@ -42,6 +43,35 @@ JWT_ALGO = "HS256"
 
 PESEPAY_INTEGRATION_KEY = os.environ.get("PESEPAY_INTEGRATION_KEY", "").strip()
 PESEPAY_ENCRYPTION_KEY = os.environ.get("PESEPAY_ENCRYPTION_KEY", "").strip()
+PESEPAY_ENV = os.environ.get("PESEPAY_ENV", "sandbox").strip().lower()
+
+# Pesepay uses separate hosts for sandbox and production. Keep sandbox as the
+# default so test credentials can never accidentally be sent to the live API.
+if PESEPAY_ENV in {"sandbox", "test", "testing"}:
+    PESEPAY_ENV = "sandbox"
+    PESEPAY_BASE_URL = "https://api.test.sandbox.pesepay.com"
+else:
+    PESEPAY_ENV = "production"
+    PESEPAY_BASE_URL = "https://api.pesepay.com"
+
+# These can be overridden from Render if Pesepay changes a path without
+# requiring another code deployment.
+PESEPAY_INITIATE_URL = os.environ.get(
+    "PESEPAY_INITIATE_URL",
+    (
+        f"{PESEPAY_BASE_URL}/payments-engine/v1/payments/initiate"
+        if PESEPAY_ENV == "sandbox"
+        else f"{PESEPAY_BASE_URL}/api/payments-engine/v1/payments/initiate"
+    ),
+).strip()
+PESEPAY_STATUS_URL = os.environ.get(
+    "PESEPAY_STATUS_URL",
+    (
+        f"{PESEPAY_BASE_URL}/payments-engine/v1/payments/check-payment"
+        if PESEPAY_ENV == "sandbox"
+        else f"{PESEPAY_BASE_URL}/api/payments-engine/v1/payments/check-payment"
+    ),
+).strip()
 
 app = FastAPI(title="Zimlink API")
 api = APIRouter(prefix="/api")
@@ -1478,50 +1508,164 @@ class TopUpRequest(BaseModel):
 
 
 def _pesepay_value(obj, *names, default=None):
-    """Read a value from either a Pesepay SDK response object or dict."""
+    """Read a value from a Pesepay response dictionary."""
     if obj is None:
         return default
     for name in names:
         if isinstance(obj, dict) and name in obj:
             return obj.get(name)
-        if hasattr(obj, name):
-            return getattr(obj, name)
     return default
 
 
-def _configure_pesepay_client(result_url: str = "", return_url: str = ""):
+def _pesepay_validate_config() -> None:
     if not PESEPAY_INTEGRATION_KEY or not PESEPAY_ENCRYPTION_KEY:
         raise HTTPException(status_code=500, detail="Pesepay is not configured")
-
-    client = Pesepay(PESEPAY_INTEGRATION_KEY, PESEPAY_ENCRYPTION_KEY)
-
-    # The official SDK exposes result_url and return_url as client attributes.
-    # Setting them per transaction keeps the callback tied to this top-up.
-    if result_url:
-        client.result_url = result_url
-    if return_url:
-        client.return_url = return_url
-    return client
+    if len(PESEPAY_ENCRYPTION_KEY.encode("utf-8")) != 32:
+        raise HTTPException(
+            status_code=500,
+            detail="Pesepay encryption key must be exactly 32 bytes",
+        )
 
 
-def _pesepay_initiate_sync(
+def _pesepay_encrypt(data: dict) -> str:
+    """Encrypt a Pesepay request with AES-256-CBC + PKCS7 padding."""
+    _pesepay_validate_config()
+    key = PESEPAY_ENCRYPTION_KEY.encode("utf-8")
+    iv = PESEPAY_ENCRYPTION_KEY[:16].encode("utf-8")
+    plaintext = json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    encrypted = cipher.encrypt(pad(plaintext, AES.block_size))
+    return base64.b64encode(encrypted).decode("utf-8")
+
+
+def _pesepay_decrypt(payload: str) -> dict:
+    """Decrypt an encrypted Pesepay response payload."""
+    _pesepay_validate_config()
+    key = PESEPAY_ENCRYPTION_KEY.encode("utf-8")
+    iv = PESEPAY_ENCRYPTION_KEY[:16].encode("utf-8")
+    raw = base64.b64decode(payload)
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    decrypted = unpad(cipher.decrypt(raw), AES.block_size).decode("utf-8")
+    value = json.loads(decrypted)
+    if not isinstance(value, dict):
+        raise RuntimeError("Pesepay returned an unexpected response format")
+    return value
+
+
+def _pesepay_unpack_response(data):
+    """Handle both encrypted API responses and readable error responses."""
+    if not isinstance(data, dict):
+        raise RuntimeError("Pesepay returned an invalid response")
+    encrypted_payload = data.get("payload")
+    if encrypted_payload:
+        return _pesepay_decrypt(str(encrypted_payload))
+    return data
+
+
+async def _pesepay_initiate(
+    *,
     amount: float,
     currency: str,
     reason: str,
+    merchant_reference: str,
     result_url: str,
     return_url: str,
-):
-    client = _configure_pesepay_client(result_url=result_url, return_url=return_url)
-    transaction = client.create_transaction(amount, currency, reason)
-    return client.initiate_transaction(transaction)
+    customer_email: str,
+    customer_name: str,
+    customer_phone: str,
+) -> dict:
+    _pesepay_validate_config()
+
+    payment_body = {
+        "amountDetails": {
+            "amount": amount,
+            "currencyCode": currency,
+        },
+        "merchantReference": merchant_reference,
+        "reasonForPayment": reason,
+        "resultUrl": result_url,
+        "returnUrl": return_url,
+        "customer": {
+            "email": customer_email or "",
+            "phoneNumber": customer_phone or "",
+            "name": customer_name or "",
+        },
+    }
+
+    headers = {
+        "authorization": PESEPAY_INTEGRATION_KEY,
+        "content-type": "application/json",
+        "accept": "application/json",
+    }
+
+    logger.info("Starting Pesepay %s checkout via %s", PESEPAY_ENV, PESEPAY_INITIATE_URL)
+    async with httpx.AsyncClient(timeout=30.0) as http_client:
+        response = await http_client.post(
+            PESEPAY_INITIATE_URL,
+            headers=headers,
+            json={"payload": _pesepay_encrypt(payment_body)},
+        )
+
+    try:
+        body = response.json()
+    except Exception:
+        body = {"message": response.text[:500]}
+
+    if response.status_code >= 400:
+        readable = _pesepay_unpack_response(body) if isinstance(body, dict) else body
+        message = _pesepay_value(
+            readable,
+            "message",
+            "error",
+            "transactionStatusDescription",
+            default=f"Pesepay returned HTTP {response.status_code}",
+        )
+        raise RuntimeError(str(message))
+
+    return _pesepay_unpack_response(body)
 
 
-def _pesepay_check_sync(reference_number: str):
-    client = _configure_pesepay_client()
-    checker = getattr(client, "check_payment", None) or getattr(client, "check_payment_status", None)
-    if checker is None:
-        raise RuntimeError("Installed Pesepay SDK does not provide a payment-status method")
-    return checker(reference_number)
+async def _pesepay_check(reference_number: str, poll_url: str = "") -> dict:
+    _pesepay_validate_config()
+    headers = {
+        "authorization": PESEPAY_INTEGRATION_KEY,
+        "content-type": "application/json",
+        "accept": "application/json",
+    }
+
+    # Pesepay returns pollUrl when a payment is initiated. Prefer it because it
+    # is the provider's exact status endpoint for this transaction.
+    url = (poll_url or "").strip()
+    params = None
+    if not url:
+        url = PESEPAY_STATUS_URL
+        params = {"referenceNumber": reference_number}
+
+    # Never allow a sandbox transaction to be polled against the live host.
+    if PESEPAY_ENV == "sandbox" and "api.pesepay.com" in url and "sandbox" not in url:
+        url = PESEPAY_STATUS_URL
+        params = {"referenceNumber": reference_number}
+
+    async with httpx.AsyncClient(timeout=30.0) as http_client:
+        response = await http_client.get(url, headers=headers, params=params)
+
+    try:
+        body = response.json()
+    except Exception:
+        body = {"message": response.text[:500]}
+
+    if response.status_code >= 400:
+        readable = _pesepay_unpack_response(body) if isinstance(body, dict) else body
+        message = _pesepay_value(
+            readable,
+            "message",
+            "error",
+            "transactionStatusDescription",
+            default=f"Pesepay returned HTTP {response.status_code}",
+        )
+        raise RuntimeError(str(message))
+
+    return _pesepay_unpack_response(body)
 
 
 def _pesepay_is_paid(response) -> bool:
@@ -1533,6 +1677,7 @@ def _pesepay_is_paid(response) -> bool:
 
     status_value = _pesepay_value(
         response,
+        "transactionStatus",
         "payment_status",
         "paymentStatus",
         "status",
@@ -1552,6 +1697,7 @@ def _pesepay_is_paid(response) -> bool:
 def _pesepay_status_text(response) -> str:
     status_value = _pesepay_value(
         response,
+        "transactionStatus",
         "payment_status",
         "paymentStatus",
         "status",
@@ -1597,13 +1743,16 @@ async def create_topup_checkout(
         result_url = f"{backend_url}/api/webhook/pesepay?session_id={session_id}"
 
     try:
-        response = await asyncio.to_thread(
-            _pesepay_initiate_sync,
-            amount,
-            "USD",
-            f"ZimLink Wallet Top-up ${amount:.2f}",
-            result_url,
-            return_url,
+        response = await _pesepay_initiate(
+            amount=amount,
+            currency="USD",
+            reason=f"ZimLink Wallet Top-up ${amount:.2f}",
+            merchant_reference=session_id,
+            result_url=result_url,
+            return_url=return_url,
+            customer_email=current.get("email", ""),
+            customer_name=current.get("name", ""),
+            customer_phone=current.get("phone", ""),
         )
     except HTTPException:
         raise
@@ -1641,6 +1790,8 @@ async def create_topup_checkout(
         # This is a ZimLink-generated ID, not a Pesepay transaction reference.
         "session_id": session_id,
         "pesepay_reference": str(reference_number),
+        "pesepay_poll_url": str(_pesepay_value(response, "pollUrl", "poll_url", default="") or ""),
+        "pesepay_environment": PESEPAY_ENV,
         "package_amount": amount,
         "fee_amount": fee_amount,
         "credited_amount": credited_amount,
@@ -1661,6 +1812,7 @@ async def create_topup_checkout(
         "checkout_url": str(redirect_url),
         "session_id": session_id,
         "reference_number": str(reference_number),
+        "environment": PESEPAY_ENV,
     }
 
 
@@ -1682,7 +1834,10 @@ async def _process_completed_payment(session_id: str) -> dict:
         raise HTTPException(status_code=500, detail="Pesepay reference is missing")
 
     try:
-        response = await asyncio.to_thread(_pesepay_check_sync, reference_number)
+        response = await _pesepay_check(
+            reference_number,
+            str(tx.get("pesepay_poll_url") or ""),
+        )
     except Exception as exc:
         logger.exception("Pesepay status check failed for %s: %s", reference_number, exc)
         raise HTTPException(status_code=502, detail="Could not verify Pesepay payment status")
