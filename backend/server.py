@@ -28,7 +28,8 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Respons
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
-import stripe
+import asyncio
+from pesepay import Pesepay
 
 
 # ----- Setup -----
@@ -39,8 +40,8 @@ db = client[os.environ['DB_NAME']]
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALGO = "HS256"
 
-stripe.api_key = os.environ.get("STRIPE_API_KEY", "")
-STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+PESEPAY_INTEGRATION_KEY = os.environ.get("PESEPAY_INTEGRATION_KEY", "").strip()
+PESEPAY_ENCRYPTION_KEY = os.environ.get("PESEPAY_ENCRYPTION_KEY", "").strip()
 
 app = FastAPI(title="Zimlink API")
 api = APIRouter(prefix="/api")
@@ -726,10 +727,10 @@ def send_topup_completed_email(
 
 async def ensure_topup_completed_email(tx: dict) -> None:
     """
-    Claim and send one top-up email per Stripe session.
+    Claim and send one top-up email per payment session.
 
-    Both the wallet status endpoint and Stripe webhook can process the same
-    checkout. The atomic claim prevents them from sending duplicate emails.
+    Both the wallet status endpoint and Pesepay result callback can process the
+    same checkout. The atomic claim prevents them from sending duplicate emails.
     A failed email can be retried by a later status check or webhook delivery.
     """
     session_id = tx.get("session_id")
@@ -804,7 +805,7 @@ async def ensure_topup_completed_email(tx: dict) -> None:
         )
         # The payment and wallet credit remain successful even if email fails.
         logger.exception(
-            "Top-up confirmation email failed for Stripe session %s",
+            "Top-up confirmation email failed for payment session %s",
             session_id,
         )
 
@@ -1428,12 +1429,12 @@ async def transactions(current=Depends(get_current_user)):
     return txs
 
 
-# ----- Stripe Wallet Top-up -----
+# ----- Pesepay Wallet Top-up -----
 async def get_app_settings() -> dict:
     """Global wallet/top-up settings.
 
-    For Stripe, users are credited the full package amount.
-    Stripe processing fees are not shown to users and are not deducted from wallet credit.
+    Users are credited the full package amount after Pesepay confirms payment.
+    Processing fees are not shown to users and are not deducted from wallet credit.
     """
     settings = await db.app_settings.find_one({"id": "global"}, {"_id": 0})
     if not settings:
@@ -1476,10 +1477,97 @@ class TopUpRequest(BaseModel):
     origin_url: str
 
 
+def _pesepay_value(obj, *names, default=None):
+    """Read a value from either a Pesepay SDK response object or dict."""
+    if obj is None:
+        return default
+    for name in names:
+        if isinstance(obj, dict) and name in obj:
+            return obj.get(name)
+        if hasattr(obj, name):
+            return getattr(obj, name)
+    return default
+
+
+def _configure_pesepay_client(result_url: str = "", return_url: str = ""):
+    if not PESEPAY_INTEGRATION_KEY or not PESEPAY_ENCRYPTION_KEY:
+        raise HTTPException(status_code=500, detail="Pesepay is not configured")
+
+    client = Pesepay(PESEPAY_INTEGRATION_KEY, PESEPAY_ENCRYPTION_KEY)
+
+    # The official SDK exposes result_url and return_url as client attributes.
+    # Setting them per transaction keeps the callback tied to this top-up.
+    if result_url:
+        client.result_url = result_url
+    if return_url:
+        client.return_url = return_url
+    return client
+
+
+def _pesepay_initiate_sync(
+    amount: float,
+    currency: str,
+    reason: str,
+    result_url: str,
+    return_url: str,
+):
+    client = _configure_pesepay_client(result_url=result_url, return_url=return_url)
+    transaction = client.create_transaction(amount, currency, reason)
+    return client.initiate_transaction(transaction)
+
+
+def _pesepay_check_sync(reference_number: str):
+    client = _configure_pesepay_client()
+    checker = getattr(client, "check_payment", None) or getattr(client, "check_payment_status", None)
+    if checker is None:
+        raise RuntimeError("Installed Pesepay SDK does not provide a payment-status method")
+    return checker(reference_number)
+
+
+def _pesepay_is_paid(response) -> bool:
+    paid = _pesepay_value(response, "paid", "is_paid", "isPaid")
+    if isinstance(paid, bool):
+        return paid
+    if isinstance(paid, str):
+        return paid.strip().lower() in {"true", "1", "yes"}
+
+    status_value = _pesepay_value(
+        response,
+        "payment_status",
+        "paymentStatus",
+        "status",
+        default="",
+    )
+    normalized = str(status_value or "").strip().lower().replace("_", " ").replace("-", " ")
+    return normalized in {
+        "paid",
+        "payment successful",
+        "successful",
+        "success",
+        "completed",
+        "complete",
+    }
+
+
+def _pesepay_status_text(response) -> str:
+    status_value = _pesepay_value(
+        response,
+        "payment_status",
+        "paymentStatus",
+        "status",
+        default="pending",
+    )
+    return str(status_value or "pending").strip().lower()
+
+
 @api.post("/wallet/topup/checkout")
-async def create_topup_checkout(data: TopUpRequest, current=Depends(get_current_user)):
-    if not stripe.api_key:
-        raise HTTPException(status_code=500, detail="Stripe is not configured")
+async def create_topup_checkout(
+    data: TopUpRequest,
+    request: Request,
+    current=Depends(get_current_user),
+):
+    if not PESEPAY_INTEGRATION_KEY or not PESEPAY_ENCRYPTION_KEY:
+        raise HTTPException(status_code=500, detail="Pesepay is not configured")
 
     settings = await get_app_settings()
     allowed = [float(a) for a in settings.get("topup_packages", [])]
@@ -1488,56 +1576,78 @@ async def create_topup_checkout(data: TopUpRequest, current=Depends(get_current_
     if amount not in allowed:
         raise HTTPException(status_code=400, detail="Invalid package amount")
 
-    # User pays this amount and receives the full amount in ZimLink wallet.
-    # Stripe fees are absorbed by ZimLink and are not shown/deducted from user credit.
     fee_amount = 0.0
     credited_amount = amount
+    session_id = new_id()
 
     origin = data.origin_url.rstrip("/")
-    success_url = f"{origin}/wallet?session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url = f"{origin}/wallet?cancelled=1"
+    return_url = f"{origin}/wallet?session_id={session_id}"
+
+    # Prefer an explicit public backend URL in production. request.base_url is
+    # a useful fallback for local development and simple deployments.
+    backend_url = os.environ.get("BACKEND_URL", "").strip().rstrip("/")
+    if not backend_url:
+        backend_url = str(request.base_url).rstrip("/")
+
+    configured_result_url = os.environ.get("PESEPAY_RESULT_URL", "").strip()
+    if configured_result_url:
+        separator = "&" if "?" in configured_result_url else "?"
+        result_url = f"{configured_result_url}{separator}session_id={session_id}"
+    else:
+        result_url = f"{backend_url}/api/webhook/pesepay?session_id={session_id}"
 
     try:
-        session = stripe.checkout.Session.create(
-            mode="payment",
-            payment_method_types=["card"],
-            line_items=[{
-                "price_data": {
-                    "currency": "usd",
-                    "product_data": {
-                        "name": f"ZimLink Wallet Top-up ${amount:.2f}",
-                    },
-                    "unit_amount": int(round(amount * 100)),
-                },
-                "quantity": 1,
-            }],
-            success_url=success_url,
-            cancel_url=cancel_url,
-            metadata={
-                "purpose": "wallet_topup",
-                "user_id": current["id"],
-                "user_email": current["email"],
-                "amount": str(amount),
-                "fee_amount": str(fee_amount),
-                "credited_amount": str(credited_amount),
-            },
+        response = await asyncio.to_thread(
+            _pesepay_initiate_sync,
+            amount,
+            "USD",
+            f"ZimLink Wallet Top-up ${amount:.2f}",
+            result_url,
+            return_url,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
-        logger.error(f"Stripe checkout creation failed: {exc}")
-        raise HTTPException(status_code=502, detail="Could not create Stripe checkout session")
+        logger.exception("Pesepay checkout creation failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Could not create Pesepay checkout")
+
+    success = _pesepay_value(response, "success", "successful", default=True)
+    if isinstance(success, str):
+        success = success.strip().lower() in {"true", "1", "yes", "success", "successful"}
+
+    redirect_url = _pesepay_value(response, "redirect_url", "redirectUrl", "url")
+    reference_number = _pesepay_value(
+        response,
+        "reference_number",
+        "referenceNumber",
+        "reference",
+    )
+    message = _pesepay_value(response, "message", default="")
+
+    if success is False or not redirect_url or not reference_number:
+        logger.error(
+            "Pesepay initiation did not return a usable checkout. success=%r message=%r",
+            success,
+            message,
+        )
+        raise HTTPException(status_code=502, detail=message or "Pesepay could not start the payment")
 
     tx = {
         "id": new_id(),
-        "provider": "stripe",
+        "provider": "pesepay",
         "user_id": current["id"],
         "user_email": current["email"],
-        "session_id": session.id,
+        # Keep session_id because the existing wallet frontend already uses it.
+        # This is a ZimLink-generated ID, not a Pesepay transaction reference.
+        "session_id": session_id,
+        "pesepay_reference": str(reference_number),
         "package_amount": amount,
         "fee_amount": fee_amount,
         "credited_amount": credited_amount,
         "currency": "usd",
         "status": "initiated",
         "payment_status": "unpaid",
+        "checkout_url": str(redirect_url),
         "created_at": now_iso(),
         "completed_at": None,
         "topup_email_status": "pending",
@@ -1547,9 +1657,10 @@ async def create_topup_checkout(data: TopUpRequest, current=Depends(get_current_
     await db.payment_transactions.insert_one(tx)
 
     return {
-        "url": session.url,
-        "checkout_url": session.url,
-        "session_id": session.id,
+        "url": str(redirect_url),
+        "checkout_url": str(redirect_url),
+        "session_id": session_id,
+        "reference_number": str(reference_number),
     }
 
 
@@ -1558,9 +1669,6 @@ async def _process_completed_payment(session_id: str) -> dict:
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
 
-    # A webhook and the browser status poll can reach this function at nearly
-    # the same time. If payment was already processed, do not credit again,
-    # but still retry a notification that was never sent.
     if tx.get("payment_status") == "paid":
         await ensure_topup_completed_email(tx)
         latest = await db.payment_transactions.find_one(
@@ -1569,21 +1677,31 @@ async def _process_completed_payment(session_id: str) -> dict:
         )
         return latest or tx
 
-    try:
-        session = stripe.checkout.Session.retrieve(session_id)
-    except Exception as exc:
-        logger.error(f"Stripe session retrieve failed: {exc}")
-        raise HTTPException(status_code=502, detail="Could not verify payment status")
+    reference_number = tx.get("pesepay_reference")
+    if not reference_number:
+        raise HTTPException(status_code=500, detail="Pesepay reference is missing")
 
-    if session.payment_status == "paid":
+    try:
+        response = await asyncio.to_thread(_pesepay_check_sync, reference_number)
+    except Exception as exc:
+        logger.exception("Pesepay status check failed for %s: %s", reference_number, exc)
+        raise HTTPException(status_code=502, detail="Could not verify Pesepay payment status")
+
+    provider_status = _pesepay_status_text(response)
+    paid = _pesepay_is_paid(response)
+
+    if paid:
         completed_at = now_iso()
 
+        # Atomic update: only the first request that changes unpaid -> paid is
+        # allowed to add money to the user's wallet.
         result = await db.payment_transactions.update_one(
             {"session_id": session_id, "payment_status": {"$ne": "paid"}},
             {
                 "$set": {
                     "status": "completed",
                     "payment_status": "paid",
+                    "provider_status": provider_status,
                     "completed_at": completed_at,
                 }
             },
@@ -1596,26 +1714,33 @@ async def _process_completed_payment(session_id: str) -> dict:
             )
             tx["status"] = "completed"
             tx["payment_status"] = "paid"
+            tx["provider_status"] = provider_status
             tx["completed_at"] = completed_at
-
-            # Email errors are handled internally and never reverse or block
-            # a successfully credited wallet top-up.
             await ensure_topup_completed_email(tx)
         else:
-            # Another request completed the transaction first. Reload it and
-            # let the email claim logic determine whether a message is needed.
             tx = await db.payment_transactions.find_one(
                 {"session_id": session_id},
                 {"_id": 0},
             ) or tx
             await ensure_topup_completed_email(tx)
+    else:
+        normalized = provider_status.replace("_", " ").replace("-", " ")
+        if normalized in {"cancelled", "canceled", "failed", "declined", "expired"}:
+            local_status = "cancelled" if normalized in {"cancelled", "canceled"} else normalized
+        else:
+            local_status = "pending"
 
-    elif getattr(session, "status", None) == "expired":
         await db.payment_transactions.update_one(
-            {"session_id": session_id},
-            {"$set": {"status": "expired"}},
+            {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+            {
+                "$set": {
+                    "status": local_status,
+                    "provider_status": provider_status,
+                }
+            },
         )
-        tx["status"] = "expired"
+        tx["status"] = local_status
+        tx["provider_status"] = provider_status
 
     latest = await db.payment_transactions.find_one(
         {"session_id": session_id},
@@ -1637,6 +1762,8 @@ async def topup_status(session_id: str, current=Depends(get_current_user)):
         "amount": float(updated.get("package_amount", 0.0)),
         "credited": float(updated.get("credited_amount", 0.0)),
         "fee": 0.0,
+        "provider": updated.get("provider", "pesepay"),
+        "provider_status": updated.get("provider_status"),
     }
 
 
@@ -1648,33 +1775,24 @@ async def topup_history(current=Depends(get_current_user)):
     return items
 
 
-@api.post("/webhook/stripe")
-async def stripe_webhook(request: Request):
-    payload = await request.body()
-    sig = request.headers.get("Stripe-Signature", "")
+@api.api_route("/webhook/pesepay", methods=["GET", "POST"])
+async def pesepay_result_callback(session_id: str):
+    """Pesepay result callback.
 
+    The callback does not trust payment details sent by the browser/provider.
+    It re-checks the transaction directly with Pesepay before crediting funds.
+    """
     try:
-        if STRIPE_WEBHOOK_SECRET:
-            event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
-        else:
-            # Helpful during local/dev testing only. In production, set STRIPE_WEBHOOK_SECRET.
-            import json
-            event = stripe.Event.construct_from(json.loads(payload), stripe.api_key)
+        await _process_completed_payment(session_id)
+    except HTTPException as exc:
+        # A temporary Pesepay status-check failure should be retried by Pesepay
+        # or by the wallet page when the user returns.
+        if exc.status_code >= 500:
+            raise
+        logger.warning("Pesepay callback ignored for %s: %s", session_id, exc.detail)
     except Exception as exc:
-        logger.error(f"Stripe webhook error: {exc}")
-        raise HTTPException(status_code=400, detail="Invalid Stripe webhook")
-
-    if event["type"] == "checkout.session.completed":
-        session_obj = event["data"]["object"]
-        session_id = session_obj["id"]
-        payment_status = session_obj.get("payment_status")
-
-        if payment_status == "paid":
-            try:
-                await _process_completed_payment(session_id)
-            except Exception as exc:
-                logger.error(f"Could not process Stripe payment {session_id}: {exc}")
-                raise HTTPException(status_code=500, detail="Could not process payment")
+        logger.exception("Could not process Pesepay callback for %s: %s", session_id, exc)
+        raise HTTPException(status_code=500, detail="Could not process payment")
 
     return {"ok": True}
 
@@ -2920,6 +3038,11 @@ async def on_startup():
         [("user_id", 1), ("started_at", -1)]
     )
     await db.payment_transactions.create_index("session_id", unique=True)
+    await db.payment_transactions.create_index(
+        "pesepay_reference",
+        unique=True,
+        sparse=True,
+    )
     await db.payment_transactions.create_index([("user_id", 1), ("created_at", -1)])
 
     admin_email = os.environ.get("ADMIN_EMAIL", "").lower()
