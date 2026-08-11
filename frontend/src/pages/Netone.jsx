@@ -8,7 +8,7 @@ export default function Netone() {
       color="bg-blue-50 dark:bg-blue-950/30"
       initials="NO"
       initialsColor="text-blue-600"
-      logo="/logos/netone.png"
+      logo="/Assets/netone.png"
     />
   );
 }
