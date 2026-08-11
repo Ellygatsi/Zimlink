@@ -9,6 +9,7 @@ import {
   Storefront,
   ChatsCircle,
   CalendarStar,
+  Lightning,
 } from "@phosphor-icons/react";
 import HomeSlideshow from "@/components/HomeSlideshow";
 
@@ -216,6 +217,47 @@ export default function Home() {
 
               <p className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400 md:text-xs">
                 Active listings
+              </p>
+            </div>
+          </Link>
+
+          {/* Airtime & Bills */}
+          <Link
+            to="/airtime"
+            className="group relative min-h-[145px] overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 p-4 transition-all hover:-translate-y-1 hover:border-green-500 dark:border-neutral-800 dark:bg-neutral-900 md:min-h-[190px] md:rounded-2xl md:p-6"
+            data-testid="home-airtime-tile"
+          >
+            <Lightning
+              size={115}
+              weight="duotone"
+              className="pointer-events-none absolute -bottom-8 -right-7 text-green-600 opacity-[0.10] transition-transform duration-300 group-hover:scale-110 dark:text-green-500 dark:opacity-[0.14] md:h-[155px] md:w-[155px]"
+            />
+
+            <div className="relative z-10">
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-green-100 dark:bg-green-950/50 md:h-14 md:w-14">
+                <Lightning
+                  size={23}
+                  weight="fill"
+                  className="text-green-600 md:hidden"
+                />
+
+                <Lightning
+                  size={30}
+                  weight="fill"
+                  className="hidden text-green-600 md:block"
+                />
+              </div>
+
+              <p className="mt-4 text-[10px] font-medium uppercase tracking-widest text-neutral-500 dark:text-neutral-400 md:text-xs">
+                Airtime & Bills
+              </p>
+
+              <p className="mt-1 text-xl font-medium text-black dark:text-white md:text-3xl">
+                Top up
+              </p>
+
+              <p className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400 md:text-xs">
+                Send airtime & pay bills
               </p>
             </div>
           </Link>

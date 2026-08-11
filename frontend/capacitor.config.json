@@ -1,5 +1,9 @@
 {
-  "appId": "com.zimlink.app",
-  "appName": "Zimlink",
-  "webDir": "build"
+  "appId": "me.zimlink.app",
+  "appName": "ZimLink",
+  "webDir": "build",
+  "server": {
+    "url": "https://app.zimlink.me",
+    "cleartext": false
+  }
 }

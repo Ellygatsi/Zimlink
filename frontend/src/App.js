@@ -22,6 +22,10 @@ import AdminGuard from "@/components/AdminGuard";
 import TicketSuccess from "@/pages/TicketSuccess";
 import Profile from "@/pages/Profile";
 import "@/App.css";
+import AirtimeBills from "@/pages/AirtimeBills";
+import Econet from "@/pages/Econet";
+import Netone from "@/pages/Netone";
+import Zesa from "@/pages/Zesa";
 
 function Protected({ children }) {
   return (
@@ -190,6 +194,10 @@ function App() {
             />
 
             <Route path="*" element={<Navigate to="/home" replace />} />
+            <Route path="/airtime" element={<AirtimeBills />} />
+            <Route path="/airtime/econet" element={<Econet />} />
+            <Route path="/airtime/netone" element={<Netone />} />
+            <Route path="/airtime/zesa" element={<Zesa />} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>
