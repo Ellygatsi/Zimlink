@@ -173,7 +173,10 @@ class ReloadlyClient:
 
         url = f"{base_url}/{path.lstrip('/')}"
 
-accept_header = (
+        # Reloadly's sandbox API requires a versioned Accept header specific
+        # to each service. A generic "application/json" Accept header is
+        # rejected with HTTP 406 Not Acceptable.
+        accept_header = (
             "application/com.reloadly.topups-v1+json"
             if service == "airtime"
             else "application/com.reloadly.utilities-v1+json"
