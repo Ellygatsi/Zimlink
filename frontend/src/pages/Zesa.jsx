@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import api from "@/lib/api";
-import { Lightbulb, CheckCircle, Spinner, Copy } from "@phosphor-icons/react";
+import { Lightbulb, CheckCircle, Spinner, Copy, XCircle } from "@phosphor-icons/react";
 
 import zetdcLogo from "@/Assets/Zetdc.png";
 
@@ -51,7 +51,6 @@ export default function Zesa() {
 
   function copyToken() {
     if (!result?.token) return;
-
     navigator.clipboard.writeText(result.token);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -69,26 +68,16 @@ export default function Zesa() {
   return (
     <div className="space-y-5 md:space-y-6" data-testid="zesa-page">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-3">
-        <div className="flex items-center gap-3.5">
-          <div className="flex h-12 w-12 md:h-14 md:w-14 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white p-2 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800">
-            <img
-              src={zetdcLogo}
-              alt="ZESA / ZETDC logo"
-              className="h-full w-full object-contain"
-              onError={(e) => {
-                e.currentTarget.style.display = "none";
-              }}
-            />
-          </div>
-
-          <div>
-            <p className="text-[10px] md:text-xs font-medium tracking-widest text-green-500 uppercase">
-              Bill payments
-            </p>
-            <h1 className="text-2xl md:text-5xl font-medium tracking-tight mt-1 text-black dark:text-white">
-              ZESA / ZETDC
-            </h1>
-          </div>
+        <div>
+          <p className="text-[10px] md:text-xs font-medium tracking-widest text-green-500 uppercase">
+            Bill payments
+          </p>
+          <h1 className="text-3xl md:text-6xl font-medium tracking-tight mt-1.5 md:mt-2 text-black dark:text-white">
+            ZESA.
+          </h1>
+          <p className="text-xs md:text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 md:mt-2">
+            Buy an electricity token instantly.
+          </p>
         </div>
 
         <Link
@@ -100,10 +89,7 @@ export default function Zesa() {
       </div>
 
       {result ? (
-        <div
-          className="rounded-2xl p-6 md:p-8 max-w-md mx-auto bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
-          data-testid="zesa-result"
-        >
+        <div className="rounded-2xl p-6 md:p-8 max-w-md mx-auto bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800" data-testid="zesa-result">
           <div className="flex items-center gap-2.5">
             <span className="flex h-9 w-9 items-center justify-center rounded-full bg-green-600 text-black">
               <CheckCircle size={18} weight="fill" />
@@ -160,95 +146,110 @@ export default function Zesa() {
           </button>
         </div>
       ) : (
-        <form
-          onSubmit={handleSubmit}
-          className="rounded-2xl p-6 md:p-8 max-w-md mx-auto bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800"
-        >
-          <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">
-            ZESA meter number
-          </label>
-
-          <input
-            type="text"
-            inputMode="numeric"
-            className="w-full mt-2 text-2xl md:text-3xl font-medium bg-transparent border-b-2 border-neutral-300 dark:border-neutral-700 focus:border-green-600 outline-none py-2 text-black dark:text-white"
-            placeholder="01234567890"
-            value={meter}
-            onChange={(e) => {
-              setMeter(e.target.value);
-              setError(null);
-            }}
-            data-testid="zesa-meter-input"
-          />
-
-          <div className="mt-6">
-            <p className="text-xs font-medium tracking-widest text-neutral-500 uppercase mb-2.5">
-              Amount (USD)
-            </p>
-
-            <div className="grid grid-cols-5 gap-2">
-              {QUICK_AMOUNTS.map((val) => (
-                <button
-                  key={val}
-                  type="button"
-                  onClick={() => {
-                    setAmount(val);
-                    setCustomAmount("");
-                    setError(null);
-                  }}
-                  className={`rounded-lg py-2.5 text-sm font-medium transition-colors ${
-                    amount === val && !customAmount
-                      ? "bg-green-600 text-black"
-                      : "bg-neutral-200 dark:bg-neutral-800 text-black dark:text-white"
-                  }`}
-                  data-testid={`zesa-amount-${val}`}
-                >
-                  ${val}
-                </button>
-              ))}
+        <div className="rounded-2xl p-6 md:p-8 max-w-md mx-auto bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white p-2 dark:bg-neutral-950">
+              <img
+                src={zetdcLogo}
+                alt="ZESA / ZETDC logo"
+                className="h-full w-full object-contain"
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+              />
             </div>
 
-            <input
-              type="number"
-              min="1"
-              step="0.01"
-              value={customAmount}
-              onChange={(e) => {
-                setCustomAmount(e.target.value);
-                setAmount(null);
-                setError(null);
-              }}
-              placeholder="Or enter a custom amount"
-              className="w-full mt-3 rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 outline-none focus:border-green-600 text-black dark:text-white"
-              data-testid="zesa-custom-amount-input"
-            />
+            <p className="text-sm font-medium text-black dark:text-white">ZESA / ZETDC</p>
           </div>
 
-          {error && (
-            <p className="mt-4 text-xs text-center text-red-600 dark:text-red-400" data-testid="zesa-error">
-              {error}
-            </p>
-          )}
+          <form onSubmit={handleSubmit}>
+            <label className="text-xs font-medium tracking-widest text-neutral-500 uppercase">
+              Meter number
+            </label>
 
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full mt-5 h-14 rounded-xl text-base font-medium bg-green-600 text-black flex items-center justify-center gap-2 disabled:opacity-50 transition-opacity"
-            data-testid="zesa-submit"
-          >
-            {submitting ? (
-              <>
-                <Spinner size={20} className="animate-spin" />
-                Processing…
-              </>
-            ) : (
-              <>
-                <Lightbulb size={18} weight="fill" />
-                Buy token{effectiveAmount ? ` — $${effectiveAmount}` : ""}
-              </>
+            <input
+              type="text"
+              inputMode="numeric"
+              className="w-full mt-2 text-2xl md:text-3xl font-medium bg-transparent border-b-2 border-neutral-300 dark:border-neutral-700 focus:border-green-600 outline-none py-2 text-black dark:text-white"
+              placeholder="01234567890"
+              value={meter}
+              onChange={(e) => {
+                setMeter(e.target.value);
+                setError(null);
+              }}
+              data-testid="zesa-meter-input"
+            />
+
+            <div className="mt-6">
+              <p className="text-xs font-medium tracking-widest text-neutral-500 uppercase mb-2.5">
+                Amount (USD)
+              </p>
+
+              <div className="grid grid-cols-5 gap-2">
+                {QUICK_AMOUNTS.map((val) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => {
+                      setAmount(val);
+                      setCustomAmount("");
+                      setError(null);
+                    }}
+                    className={`rounded-lg py-2.5 text-sm font-medium transition-colors ${
+                      amount === val && !customAmount
+                        ? "bg-green-600 text-black"
+                        : "bg-neutral-200 dark:bg-neutral-800 text-black dark:text-white"
+                    }`}
+                    data-testid={`zesa-amount-${val}`}
+                  >
+                    ${val}
+                  </button>
+                ))}
+              </div>
+
+              <input
+                type="number"
+                min="1"
+                step="0.01"
+                value={customAmount}
+                onChange={(e) => {
+                  setCustomAmount(e.target.value);
+                  setAmount(null);
+                  setError(null);
+                }}
+                placeholder="Or enter a custom amount"
+                className="w-full mt-3 rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 outline-none focus:border-green-600 text-black dark:text-white"
+                data-testid="zesa-custom-amount-input"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-full mt-5 h-14 rounded-xl text-base font-medium bg-green-600 text-black flex items-center justify-center gap-2 disabled:opacity-50 transition-opacity"
+              data-testid="zesa-submit"
+            >
+              {submitting ? (
+                <>
+                  <Spinner size={20} className="animate-spin" />
+                  Processing…
+                </>
+              ) : (
+                <>
+                  <Lightbulb size={18} weight="fill" />
+                  Buy token{effectiveAmount ? ` — $${effectiveAmount}` : ""}
+                </>
+              )}
+            </button>
+
+            {error && (
+              <p className="mt-3 text-xs text-center text-red-600 dark:text-red-400 flex items-center justify-center gap-1.5" data-testid="zesa-error">
+                <XCircle size={14} weight="bold" />
+                {error}
+              </p>
             )}
-          </button>
-        </form>
+          </form>
+        </div>
       )}
     </div>
   );

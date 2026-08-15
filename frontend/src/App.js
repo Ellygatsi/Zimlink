@@ -193,11 +193,43 @@ function App() {
               }
             />
 
+            <Route
+              path="/airtime"
+              element={
+                <Protected>
+                  <AirtimeBills />
+                </Protected>
+              }
+            />
+
+            <Route
+              path="/airtime/econet"
+              element={
+                <Protected>
+                  <Econet />
+                </Protected>
+              }
+            />
+
+            <Route
+              path="/airtime/netone"
+              element={
+                <Protected>
+                  <Netone />
+                </Protected>
+              }
+            />
+
+            <Route
+              path="/airtime/zesa"
+              element={
+                <Protected>
+                  <Zesa />
+                </Protected>
+              }
+            />
+
             <Route path="*" element={<Navigate to="/home" replace />} />
-            <Route path="/airtime" element={<AirtimeBills />} />
-            <Route path="/airtime/econet" element={<Econet />} />
-            <Route path="/airtime/netone" element={<Netone />} />
-            <Route path="/airtime/zesa" element={<Zesa />} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>
