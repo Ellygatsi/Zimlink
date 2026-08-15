@@ -1992,24 +1992,37 @@ async def pesepay_result_callback(session_id: str):
     return {"ok": True}
 
 
-# ----- Reloadly: Airtime & Bundles -----
+# ----- Reloadly: Airtime, Bundles & Bill Payments -----
+
 @api.get("/reloadly/operators/{slug}/bundles")
-async def reloadly_get_bundles(slug: str, current=Depends(get_current_user)):
+async def reloadly_get_bundles(
+    slug: str,
+    current=Depends(get_current_user),
+):
     operator = await resolve_operator(slug)
+
     try:
         bundles = await reloadly.get_bundles(operator["operatorId"])
     except ReloadlyError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.message,
+        )
 
-    # Reloadly's fixed-value bundles come back as a raw list; normalize the
-    # shape to what the frontend expects: id, name, validity, price.
+    # Reloadly fixed-value bundles come back as a raw list.
+    # Normalize them for the frontend.
     normalized = []
+
     for b in bundles if isinstance(bundles, list) else bundles.get("content", []):
         normalized.append({
             "id": b.get("id") or b.get("fixedAmount"),
             "name": b.get("name") or f"${b.get('fixedAmount')} bundle",
             "validity": b.get("validity", ""),
-            "price": b.get("fixedAmount") or b.get("amount") or b.get("localAmount"),
+            "price": (
+                b.get("fixedAmount")
+                or b.get("amount")
+                or b.get("localAmount")
+            ),
         })
 
     return normalized
@@ -2023,88 +2036,706 @@ class ReloadlyTopupIn(BaseModel):
     bundleId: Optional[str] = None
 
 
+class ReloadlyBillPaymentIn(BaseModel):
+    billerId: int
+    accountNumber: str
+    amount: float = Field(gt=0)
+    additionalInfo: Optional[dict] = None
+
+
+async def debit_wallet_for_reloadly(
+    user_id: str,
+    amount: float,
+    transaction_id: str,
+    transaction_type: str,
+) -> dict:
+    """
+    Atomically deduct money from the user's wallet.
+
+    The database is authoritative. The amount supplied by the frontend
+    is never trusted as proof that the user has enough money.
+
+    Returns the remaining wallet balance.
+    """
+
+    amount = round(float(amount), 2)
+
+    if amount <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid transaction amount",
+        )
+
+    result = await db.users.update_one(
+        {
+            "id": user_id,
+            "wallet_balance": {
+                "$gte": amount,
+            },
+        },
+        {
+            "$inc": {
+                "wallet_balance": -amount,
+            },
+        },
+    )
+
+    if result.modified_count != 1:
+        user = await db.users.find_one(
+            {"id": user_id},
+            {
+                "_id": 0,
+                "wallet_balance": 1,
+            },
+        )
+
+        balance = float(
+            (user or {}).get("wallet_balance", 0.0)
+        )
+
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INSUFFICIENT_WALLET_BALANCE",
+                "message": (
+                    "Insufficient wallet balance. "
+                    "Please reload your wallet to continue."
+                ),
+                "balance": round(balance, 2),
+                "required": round(amount, 2),
+                "transaction_type": transaction_type,
+            },
+        )
+
+    user = await db.users.find_one(
+        {"id": user_id},
+        {
+            "_id": 0,
+            "wallet_balance": 1,
+        },
+    )
+
+    remaining_balance = float(
+        (user or {}).get("wallet_balance", 0.0)
+    )
+
+    return {
+        "balance": round(remaining_balance, 2),
+        "amount": amount,
+        "transaction_id": transaction_id,
+    }
+
+
+async def refund_wallet_for_reloadly(
+    user_id: str,
+    amount: float,
+    transaction_id: str,
+    reason: str,
+) -> float:
+    """
+    Refund a wallet deduction when Reloadly fails.
+    """
+
+    amount = round(float(amount), 2)
+
+    if amount <= 0:
+        return 0.0
+
+    await db.users.update_one(
+        {"id": user_id},
+        {
+            "$inc": {
+                "wallet_balance": amount,
+            }
+        },
+    )
+
+    user = await db.users.find_one(
+        {"id": user_id},
+        {
+            "_id": 0,
+            "wallet_balance": 1,
+        },
+    )
+
+    balance = float(
+        (user or {}).get("wallet_balance", 0.0)
+    )
+
+    logger.warning(
+        "Reloadly wallet refund: user=%s amount=%.2f "
+        "transaction=%s reason=%s",
+        user_id,
+        amount,
+        transaction_id,
+        reason,
+    )
+
+    return round(balance, 2)
+
+
 @api.post("/reloadly/topup")
-async def reloadly_topup(data: ReloadlyTopupIn, current=Depends(get_current_user)):
-    op = await resolve_operator(data.operator)
-    operator_id = op["operatorId"]
+async def reloadly_topup(
+    data: ReloadlyTopupIn,
+    current=Depends(get_current_user),
+):
+    """
+    Purchase airtime or a data bundle using the user's ZimLink wallet.
+
+    Flow:
+
+        1. Validate request.
+        2. Determine the actual wallet charge.
+        3. Atomically deduct wallet.
+        4. Call Reloadly.
+        5. Refund wallet if Reloadly fails.
+        6. Save transaction history.
+    """
+
+    operator = await resolve_operator(data.operator)
+    operator_id = operator["operatorId"]
+
+    phone = (data.phone or "").strip()
+
+    if not phone:
+        raise HTTPException(
+            status_code=400,
+            detail="Phone number is required",
+        )
 
     record = {
         "id": new_id(),
         "user_id": current["id"],
         "operator": data.operator,
-        "phone": data.phone,
+        "phone": phone,
         "type": data.type,
-        "amount": data.amount,
+        "amount": None,
+        "bundleId": None,
         "bundleName": None,
+        "wallet_amount": None,
+        "status": "pending",
+        "created_at": now_iso(),
+    }
+
+    wallet_charge = 0.0
+
+    try:
+
+        # ==========================================================
+        # AIRTIME
+        # ==========================================================
+        if data.type == "airtime":
+
+            if data.amount is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Amount is required for airtime top-ups",
+                )
+
+            amount = round(float(data.amount), 2)
+
+            if amount <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Amount must be greater than zero",
+                )
+
+            wallet_charge = amount
+
+            record["amount"] = amount
+            record["wallet_amount"] = amount
+
+            # IMPORTANT:
+            # This is an atomic wallet deduction.
+            await debit_wallet_for_reloadly(
+                user_id=current["id"],
+                amount=wallet_charge,
+                transaction_id=record["id"],
+                transaction_type="airtime",
+            )
+
+            try:
+                result = await reloadly.topup(
+                    operator_id=operator_id,
+                    phone=phone,
+                    amount=amount,
+                    country_code="ZW",
+                    custom_identifier=record["id"],
+                )
+
+            except ReloadlyError:
+                # Reloadly failed after wallet was deducted.
+                await refund_wallet_for_reloadly(
+                    user_id=current["id"],
+                    amount=wallet_charge,
+                    transaction_id=record["id"],
+                    reason="Reloadly airtime transaction failed",
+                )
+                raise
+
+        # ==========================================================
+        # DATA BUNDLE
+        # ==========================================================
+        else:
+
+            if not data.bundleId:
+                raise HTTPException(
+                    status_code=400,
+                    detail="bundleId is required for bundle top-ups",
+                )
+
+            try:
+                bundle_id = int(data.bundleId)
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid bundleId",
+                )
+
+            # Get the operator bundles from Reloadly so the backend
+            # determines the actual price instead of trusting the
+            # frontend.
+            try:
+                bundles = await reloadly.get_bundles(operator_id)
+            except ReloadlyError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail=exc.message,
+                )
+
+            bundle_list = (
+                bundles
+                if isinstance(bundles, list)
+                else bundles.get("content", [])
+            )
+
+            selected_bundle = None
+
+            for bundle in bundle_list:
+                bundle_identifier = (
+                    bundle.get("id")
+                    or bundle.get("productId")
+                    or bundle.get("fixedAmount")
+                )
+
+                try:
+                    if int(bundle_identifier) == bundle_id:
+                        selected_bundle = bundle
+                        break
+                except (TypeError, ValueError):
+                    continue
+
+            if not selected_bundle:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Selected bundle could not be found",
+                )
+
+            # Reloadly may expose the price under different fields.
+            bundle_price = (
+                selected_bundle.get("fixedAmount")
+                or selected_bundle.get("amount")
+                or selected_bundle.get("localAmount")
+            )
+
+            if bundle_price is None:
+                raise HTTPException(
+                    status_code=502,
+                    detail="Could not determine the price of this bundle",
+                )
+
+            bundle_price = round(float(bundle_price), 2)
+
+            if bundle_price <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid bundle price",
+                )
+
+            wallet_charge = bundle_price
+
+            record["bundleId"] = str(bundle_id)
+            record["bundleName"] = (
+                selected_bundle.get("name")
+                or f"${bundle_price:.2f} bundle"
+            )
+            record["amount"] = bundle_price
+            record["wallet_amount"] = bundle_price
+
+            # IMPORTANT:
+            # Bundle purchases now use the wallet too.
+            await debit_wallet_for_reloadly(
+                user_id=current["id"],
+                amount=wallet_charge,
+                transaction_id=record["id"],
+                transaction_type="bundle",
+            )
+
+            try:
+                result = await reloadly.bundle_topup(
+                    operator_id=operator_id,
+                    bundle_id=bundle_id,
+                    phone=phone,
+                    country_code="ZW",
+                    custom_identifier=record["id"],
+                )
+
+            except ReloadlyError:
+                # Refund bundle charge if Reloadly failed.
+                await refund_wallet_for_reloadly(
+                    user_id=current["id"],
+                    amount=wallet_charge,
+                    transaction_id=record["id"],
+                    reason="Reloadly bundle transaction failed",
+                )
+                raise
+
+        # ==========================================================
+        # SUCCESS
+        # ==========================================================
+
+        record["status"] = "success"
+        record["reloadly_transaction_id"] = (
+            result.get("transactionId")
+            if isinstance(result, dict)
+            else None
+        )
+
+        record["completed_at"] = now_iso()
+
+    except ReloadlyError as exc:
+
+        record["status"] = "failed"
+        record["error"] = exc.message
+
+        await db.reloadly_topups.insert_one(
+            {
+                **record
+            }
+        )
+
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.message,
+        )
+
+    except HTTPException:
+        # Validation / insufficient-balance errors should not
+        # create a fake successful transaction.
+        raise
+
+    except Exception as exc:
+        logger.exception(
+            "Unexpected Reloadly top-up error: %s",
+            exc,
+        )
+
+        # If the wallet was already charged, refund it.
+        if wallet_charge > 0:
+            await refund_wallet_for_reloadly(
+                user_id=current["id"],
+                amount=wallet_charge,
+                transaction_id=record["id"],
+                reason="Unexpected Reloadly error",
+            )
+
+        record["status"] = "failed"
+        record["error"] = str(exc)[:500]
+
+        await db.reloadly_topups.insert_one(
+            {
+                **record
+            }
+        )
+
+        raise HTTPException(
+            status_code=502,
+            detail="The top-up could not be completed. Your wallet was refunded.",
+        )
+
+    await db.reloadly_topups.insert_one(
+        {
+            **record
+        }
+    )
+
+    record.pop("_id", None)
+
+    # Get the latest wallet balance after the purchase.
+    latest_user = await db.users.find_one(
+        {"id": current["id"]},
+        {
+            "_id": 0,
+            "wallet_balance": 1,
+        },
+    )
+
+    latest_balance = float(
+        (latest_user or {}).get("wallet_balance", 0.0)
+    )
+
+    return {
+        "message": "Top-up sent successfully.",
+        "wallet_balance": round(latest_balance, 2),
+        "amount_charged": round(wallet_charge, 2),
+        "topup": record,
+    }
+
+
+# ================================================================
+# Reloadly BILL PAYMENTS
+# ================================================================
+
+class ReloadlyBillPaymentIn(BaseModel):
+    billerId: int
+    accountNumber: str
+    amount: float = Field(gt=0)
+    additionalInfo: Optional[dict] = None
+
+
+@api.get("/reloadly/billers")
+async def reloadly_get_billers(
+    current=Depends(get_current_user),
+):
+    """
+    Return Zimbabwe billers available through Reloadly.
+    """
+
+    try:
+        billers = await reloadly.get_billers("ZW")
+    except ReloadlyError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.message,
+        )
+
+    return billers
+
+
+@api.get("/reloadly/billers/{biller_id}")
+async def reloadly_get_biller(
+    biller_id: int,
+    current=Depends(get_current_user),
+):
+    """
+    Return details for one Reloadly biller.
+    """
+
+    try:
+        biller = await reloadly.get_biller(biller_id)
+    except ReloadlyError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.message,
+        )
+
+    return biller
+
+
+@api.post("/reloadly/bill-payment")
+async def reloadly_bill_payment(
+    data: ReloadlyBillPaymentIn,
+    current=Depends(get_current_user),
+):
+    """
+    Pay a bill using the ZimLink wallet.
+
+    Flow:
+
+        1. Validate bill payment.
+        2. Atomically deduct wallet.
+        3. Send payment to Reloadly.
+        4. Refund wallet if Reloadly fails.
+        5. Save transaction history.
+    """
+
+    account_number = (data.accountNumber or "").strip()
+
+    if not account_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Account number is required",
+        )
+
+    amount = round(float(data.amount), 2)
+
+    if amount <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Amount must be greater than zero",
+        )
+
+    record = {
+        "id": new_id(),
+        "user_id": current["id"],
+        "biller_id": int(data.billerId),
+        "account_number": account_number,
+        "amount": amount,
+        "wallet_amount": amount,
         "status": "pending",
         "created_at": now_iso(),
     }
 
     try:
-        if data.type == "airtime":
-            if not data.amount:
-                raise HTTPException(status_code=400, detail="Amount is required for airtime top-ups")
 
-            # Debit wallet before sending the top-up to Reloadly.
-            debit = await db.users.update_one(
-                {"id": current["id"], "wallet_balance": {"$gte": data.amount}},
-                {"$inc": {"wallet_balance": -data.amount}},
-            )
-            if debit.modified_count != 1:
-                raise HTTPException(status_code=400, detail="Insufficient wallet balance")
+        # ----------------------------------------------------------
+        # Deduct wallet BEFORE sending bill payment.
+        # ----------------------------------------------------------
 
-            result = await reloadly.topup(
-                operator_id=operator_id,
-                phone=data.phone,
-                amount=data.amount,
+        await debit_wallet_for_reloadly(
+            user_id=current["id"],
+            amount=amount,
+            transaction_id=record["id"],
+            transaction_type="bill_payment",
+        )
+
+        try:
+
+            result = await reloadly.pay_bill(
+                biller_id=int(data.billerId),
+                subscriber_account_number=account_number,
+                amount=amount,
                 country_code="ZW",
                 custom_identifier=record["id"],
+                additional_info=data.additionalInfo,
             )
-        else:
-            if not data.bundleId:
-                raise HTTPException(status_code=400, detail="bundleId is required for bundle top-ups")
 
-            result = await reloadly.bundle_topup(
-                operator_id=operator_id,
-                bundle_id=int(data.bundleId),
-                phone=data.phone,
-                country_code="ZW",
-                custom_identifier=record["id"],
+        except ReloadlyError:
+
+            # Reloadly failed — refund the customer.
+            await refund_wallet_for_reloadly(
+                user_id=current["id"],
+                amount=amount,
+                transaction_id=record["id"],
+                reason="Reloadly bill payment failed",
             )
+
+            raise
 
         record["status"] = "success"
-        record["reloadly_transaction_id"] = result.get("transactionId")
+        record["reloadly_transaction_id"] = (
+            result.get("transactionId")
+            if isinstance(result, dict)
+            else None
+        )
+        record["completed_at"] = now_iso()
 
     except ReloadlyError as exc:
+
         record["status"] = "failed"
         record["error"] = exc.message
 
-        # Refund the wallet debit if airtime failed after we charged the user.
-        if data.type == "airtime" and data.amount:
-            await db.users.update_one(
-                {"id": current["id"]},
-                {"$inc": {"wallet_balance": data.amount}},
-            )
+        await db.reloadly_bill_payments.insert_one(
+            {
+                **record
+            }
+        )
 
-        await db.reloadly_topups.insert_one({**record})
-        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.message,
+        )
 
-    await db.reloadly_topups.insert_one({**record})
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+
+        logger.exception(
+            "Unexpected Reloadly bill payment error: %s",
+            exc,
+        )
+
+        # The wallet was deducted before the unexpected error.
+        await refund_wallet_for_reloadly(
+            user_id=current["id"],
+            amount=amount,
+            transaction_id=record["id"],
+            reason="Unexpected bill payment error",
+        )
+
+        record["status"] = "failed"
+        record["error"] = str(exc)[:500]
+
+        await db.reloadly_bill_payments.insert_one(
+            {
+                **record
+            }
+        )
+
+        raise HTTPException(
+            status_code=502,
+            detail="Bill payment failed. Your wallet was refunded.",
+        )
+
+    await db.reloadly_bill_payments.insert_one(
+        {
+            **record
+        }
+    )
+
     record.pop("_id", None)
 
-    return {"message": "Top-up sent successfully.", "topup": record}
+    latest_user = await db.users.find_one(
+        {"id": current["id"]},
+        {
+            "_id": 0,
+            "wallet_balance": 1,
+        },
+    )
+
+    latest_balance = float(
+        (latest_user or {}).get("wallet_balance", 0.0)
+    )
+
+    return {
+        "message": "Bill payment successful.",
+        "wallet_balance": round(latest_balance, 2),
+        "amount_charged": amount,
+        "payment": record,
+    }
 
 
 @api.get("/reloadly/topups")
-async def reloadly_topup_history(operator: Optional[str] = None, current=Depends(get_current_user)):
-    query = {"user_id": current["id"]}
+async def reloadly_topup_history(
+    operator: Optional[str] = None,
+    current=Depends(get_current_user),
+):
+    query = {
+        "user_id": current["id"]
+    }
+
     if operator:
         query["operator"] = operator
 
-    items = await db.reloadly_topups.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
+    items = await db.reloadly_topups.find(
+        query,
+        {"_id": 0},
+    ).sort(
+        "created_at",
+        -1,
+    ).to_list(200)
+
     return items
 
 
+@api.get("/reloadly/bill-payments")
+async def reloadly_bill_payment_history(
+    current=Depends(get_current_user),
+):
+    items = await db.reloadly_bill_payments.find(
+        {
+            "user_id": current["id"]
+        },
+        {
+            "_id": 0
+        },
+    ).sort(
+        "created_at",
+        -1,
+    ).to_list(200)
+
+    return items
 # ----- Marketplace -----
 @api.post("/marketplace/listings")
 async def create_listing(data: ListingIn, current=Depends(get_current_user)):
