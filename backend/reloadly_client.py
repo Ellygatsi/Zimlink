@@ -260,7 +260,7 @@ class ReloadlyClient:
         return await self._request(
             "airtime",
             "GET",
-            "/operators/countries",
+            f"/operators/countries/{country_code}",
             params={
                 "includeBundles": "true",
             },
@@ -283,12 +283,15 @@ class ReloadlyClient:
         """
         Retrieve operators for a country.
 
-        Reloadly exposes operators through its Airtime API.
+        Reloadly exposes operators through its Airtime API. The country
+        code must be part of the URL path — passing it only as a keyword
+        argument without using it in the request is what caused Reloadly
+        to reject this call with HTTP 400.
         """
         return await self._request(
             "airtime",
             "GET",
-            "/operators/countries",
+            f"/operators/countries/{country_code}",
             params={
                 "includeBundles": "true",
             },
