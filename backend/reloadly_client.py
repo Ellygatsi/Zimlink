@@ -1,7 +1,7 @@
 import os
 import uuid
 import logging
-from typing import Optional
+from typing import Optional, Any
 
 import httpx
 from dotenv import load_dotenv
@@ -51,8 +51,8 @@ class ReloadlyError(Exception):
 
 class ReloadlyClient:
     def __init__(self):
-        self._airtime_token = None
-        self._utility_token = None
+        self._airtime_token: Optional[str] = None
+        self._utility_token: Optional[str] = None
 
     # ============================================================
     # Configuration
@@ -69,7 +69,7 @@ class ReloadlyClient:
             raise ReloadlyError(
                 "Reloadly is not configured. "
                 "Add RELOADLY_CLIENT_ID and "
-                "RELOADLY_CLIENT_SECRET to the backend .env file.",
+                "RELOADLY_CLIENT_SECRET to the backend environment.",
                 status_code=500,
             )
 
@@ -107,13 +107,24 @@ class ReloadlyClient:
 
         headers = {
             "Content-Type": "application/json",
+            "Accept": "application/json",
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                RELOADLY_AUTH_URL,
-                headers=headers,
-                json=payload,
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    RELOADLY_AUTH_URL,
+                    headers=headers,
+                    json=payload,
+                )
+        except httpx.RequestError as exc:
+            logger.exception(
+                "Reloadly authentication request failed."
+            )
+
+            raise ReloadlyError(
+                f"Unable to connect to Reloadly authentication service: {exc}",
+                status_code=502,
             )
 
         try:
@@ -154,6 +165,10 @@ class ReloadlyClient:
 
         return token
 
+    # ============================================================
+    # Generic HTTP request
+    # ============================================================
+
     async def _request(
         self,
         service: str,
@@ -163,24 +178,31 @@ class ReloadlyClient:
         json_body: Optional[dict] = None,
         params: Optional[dict] = None,
         retry_on_401: bool = True,
-    ):
+    ) -> Any:
+
         token = await self._get_token(service)
 
         if service == "airtime":
             base_url = RELOADLY_AIRTIME_BASE_URL
-        else:
+
+            accept_header = (
+                "application/com.reloadly.topups-v1+json"
+            )
+
+        elif service == "utility":
             base_url = RELOADLY_UTILITY_BASE_URL
 
-        url = f"{base_url}/{path.lstrip('/')}"
+            accept_header = (
+                "application/com.reloadly.utilities-v1+json"
+            )
 
-        # Reloadly's sandbox API requires a versioned Accept header specific
-        # to each service. A generic "application/json" Accept header is
-        # rejected with HTTP 406 Not Acceptable.
-        accept_header = (
-            "application/com.reloadly.topups-v1+json"
-            if service == "airtime"
-            else "application/com.reloadly.utilities-v1+json"
-        )
+        else:
+            raise ReloadlyError(
+                "Invalid Reloadly service.",
+                status_code=500,
+            )
+
+        url = f"{base_url}/{path.lstrip('/')}"
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -188,17 +210,40 @@ class ReloadlyClient:
             "Accept": accept_header,
         }
 
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            response = await client.request(
+        logger.debug(
+            "Reloadly %s %s params=%s",
+            method,
+            url,
+            params,
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                response = await client.request(
+                    method,
+                    url,
+                    headers=headers,
+                    json=json_body,
+                    params=params,
+                )
+        except httpx.RequestError as exc:
+            logger.exception(
+                "Reloadly request failed: %s %s",
                 method,
                 url,
-                headers=headers,
-                json=json_body,
-                params=params,
             )
 
-        # Access token expired.
+            raise ReloadlyError(
+                f"Unable to connect to Reloadly: {exc}",
+                status_code=502,
+            )
+
+        # --------------------------------------------------------
+        # Access token expired
+        # --------------------------------------------------------
+
         if response.status_code == 401 and retry_on_401:
+
             if service == "airtime":
                 self._airtime_token = None
             else:
@@ -213,6 +258,10 @@ class ReloadlyClient:
                 retry_on_401=False,
             )
 
+        # --------------------------------------------------------
+        # Parse response
+        # --------------------------------------------------------
+
         try:
             body = response.json()
         except Exception:
@@ -220,7 +269,12 @@ class ReloadlyClient:
                 "message": response.text[:1000],
             }
 
+        # --------------------------------------------------------
+        # Error response
+        # --------------------------------------------------------
+
         if response.status_code >= 400:
+
             logger.error(
                 "Reloadly %s %s failed: %s",
                 method,
@@ -228,18 +282,16 @@ class ReloadlyClient:
                 body,
             )
 
-            message = (
-                body.get("message")
-                if isinstance(body, dict)
-                else None
-            )
+            message = None
 
-            if not message:
-                message = (
-                    body.get("errorCode")
-                    if isinstance(body, dict)
-                    else None
-                )
+            if isinstance(body, dict):
+                message = body.get("message")
+
+                if not message:
+                    message = body.get("errorCode")
+
+                if not message:
+                    message = body.get("error")
 
             raise ReloadlyError(
                 message or "Reloadly request failed.",
@@ -250,13 +302,20 @@ class ReloadlyClient:
         return body
 
     # ============================================================
-    # Airtime
+    # Airtime / Topups
     # ============================================================
 
     async def get_operators(
         self,
         country_code: str = "ZW",
     ):
+        """
+        Get Reloadly operators for a country.
+
+        includeBundles=true is important because Reloadly can return
+        bundle/product information as part of the operator response.
+        """
+
         return await self._request(
             "airtime",
             "GET",
@@ -273,7 +332,7 @@ class ReloadlyClient:
         return await self._request(
             "airtime",
             "GET",
-            f"/operators/{operator_id}",
+            f"/operators/{int(operator_id)}",
         )
 
     async def get_operator_by_country(
@@ -283,11 +342,10 @@ class ReloadlyClient:
         """
         Retrieve operators for a country.
 
-        Reloadly exposes operators through its Airtime API. The country
-        code must be part of the URL path — passing it only as a keyword
-        argument without using it in the request is what caused Reloadly
-        to reject this call with HTTP 400.
+        This intentionally uses the country in the URL path and requests
+        bundle information from Reloadly.
         """
+
         return await self._request(
             "airtime",
             "GET",
@@ -300,12 +358,147 @@ class ReloadlyClient:
     async def get_bundles(
         self,
         operator_id: int,
+        country_code: str = "ZW",
     ):
-        return await self._request(
-            "airtime",
-            "GET",
-            f"/operators/{operator_id}/fixed-value",
+        """
+        Get bundles/products for an operator.
+
+        IMPORTANT:
+        Reloadly's /operators/{id}/fixed-value endpoint is not reliable
+        for all operators and returns 404 for Econet in the current
+        sandbox environment.
+
+        Instead, retrieve the country's operators with includeBundles=true
+        and extract the requested operator's bundle information.
+        """
+
+        operator_id = int(operator_id)
+
+        data = await self.get_operators(
+            country_code=country_code,
         )
+
+        # --------------------------------------------------------
+        # Reloadly may return:
+        #
+        # [
+        #   {...},
+        #   {...}
+        # ]
+        #
+        # or:
+        #
+        # {
+        #   "content": [...]
+        # }
+        #
+        # Handle both.
+        # --------------------------------------------------------
+
+        if isinstance(data, list):
+            operators = data
+
+        elif isinstance(data, dict):
+            operators = (
+                data.get("content")
+                or data.get("operators")
+                or data.get("data")
+                or []
+            )
+
+        else:
+            operators = []
+
+        if not isinstance(operators, list):
+            operators = []
+
+        # --------------------------------------------------------
+        # Find requested operator
+        # --------------------------------------------------------
+
+        operator = None
+
+        for item in operators:
+            if not isinstance(item, dict):
+                continue
+
+            item_id = (
+                item.get("id")
+                or item.get("operatorId")
+            )
+
+            try:
+                if item_id is not None and int(item_id) == operator_id:
+                    operator = item
+                    break
+            except (TypeError, ValueError):
+                continue
+
+        if operator is None:
+            raise ReloadlyError(
+                f"Reloadly operator {operator_id} was not found "
+                f"for country {country_code}.",
+                status_code=404,
+                details={
+                    "operatorId": operator_id,
+                    "countryCode": country_code,
+                },
+            )
+
+        # --------------------------------------------------------
+        # Extract bundle information
+        # --------------------------------------------------------
+
+        possible_bundle_keys = (
+            "bundles",
+            "bundle",
+            "products",
+            "fixedValue",
+            "fixedValues",
+            "package",
+            "packages",
+        )
+
+        bundles = None
+
+        for key in possible_bundle_keys:
+            value = operator.get(key)
+
+            if isinstance(value, list):
+                bundles = value
+                break
+
+            if isinstance(value, dict):
+                bundles = (
+                    value.get("content")
+                    or value.get("data")
+                    or value.get("items")
+                )
+
+                if isinstance(bundles, list):
+                    break
+
+        # --------------------------------------------------------
+        # Some Reloadly responses put bundle information directly
+        # under the operator's products structure.
+        # --------------------------------------------------------
+
+        if bundles is None:
+            bundles = []
+
+        # --------------------------------------------------------
+        # Return a predictable structure to server.py/frontend.
+        #
+        # We preserve the original operator information so the API
+        # can expose useful metadata without another Reloadly call.
+        # --------------------------------------------------------
+
+        return {
+            "operator": operator,
+            "operatorId": operator_id,
+            "countryCode": country_code,
+            "bundles": bundles,
+        }
 
     async def topup(
         self,
@@ -366,13 +559,17 @@ class ReloadlyClient:
         )
 
     # ============================================================
-    # Utility Payments
+    # Utility / Bill Payments
     # ============================================================
 
     async def get_billers(
         self,
         country_code: str = "ZW",
     ):
+        """
+        Get billers available in a country.
+        """
+
         return await self._request(
             "utility",
             "GET",
@@ -389,7 +586,7 @@ class ReloadlyClient:
         return await self._request(
             "utility",
             "GET",
-            f"/billers/{biller_id}",
+            f"/billers/{int(biller_id)}",
         )
 
     async def pay_bill(
