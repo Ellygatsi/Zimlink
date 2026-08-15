@@ -32,6 +32,8 @@ import json
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 
+from reloadly_client import reloadly, ReloadlyError
+
 
 # ----- Setup -----
 mongo_url = os.environ['MONGO_URL']
@@ -1706,6 +1708,44 @@ def _pesepay_status_text(response) -> str:
     return str(status_value or "pending").strip().lower()
 
 
+# ----- Reloadly: operator resolution -----
+_reloadly_operator_cache: dict = {"data": None, "fetched_at": None}
+
+OPERATOR_NAME_HINTS = {
+    "econet": "econet",
+    "netone": "netone",
+}
+
+
+async def get_zw_operators():
+    now = datetime.now(timezone.utc)
+    cached = _reloadly_operator_cache.get("data")
+    fetched_at = _reloadly_operator_cache.get("fetched_at")
+
+    if cached and fetched_at and (now - fetched_at) < timedelta(hours=6):
+        return cached
+
+    result = await reloadly.get_operator_by_country("ZW")
+    operators = result if isinstance(result, list) else result.get("content", [])
+
+    _reloadly_operator_cache["data"] = operators
+    _reloadly_operator_cache["fetched_at"] = now
+    return operators
+
+
+async def resolve_operator(slug: str) -> dict:
+    hint = OPERATOR_NAME_HINTS.get(slug.lower())
+    if not hint:
+        raise HTTPException(status_code=400, detail=f"Unknown operator: {slug}")
+
+    operators = await get_zw_operators()
+    for op in operators:
+        if hint in (op.get("name", "").lower()):
+            return op
+
+    raise HTTPException(status_code=404, detail=f"Could not find Reloadly operator for {slug}")
+
+
 @api.post("/wallet/topup/checkout")
 async def create_topup_checkout(
     data: TopUpRequest,
@@ -1950,6 +1990,119 @@ async def pesepay_result_callback(session_id: str):
         raise HTTPException(status_code=500, detail="Could not process payment")
 
     return {"ok": True}
+
+
+# ----- Reloadly: Airtime & Bundles -----
+@api.get("/reloadly/operators/{slug}/bundles")
+async def reloadly_get_bundles(slug: str, current=Depends(get_current_user)):
+    operator = await resolve_operator(slug)
+    try:
+        bundles = await reloadly.get_bundles(operator["operatorId"])
+    except ReloadlyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+    # Reloadly's fixed-value bundles come back as a raw list; normalize the
+    # shape to what the frontend expects: id, name, validity, price.
+    normalized = []
+    for b in bundles if isinstance(bundles, list) else bundles.get("content", []):
+        normalized.append({
+            "id": b.get("id") or b.get("fixedAmount"),
+            "name": b.get("name") or f"${b.get('fixedAmount')} bundle",
+            "validity": b.get("validity", ""),
+            "price": b.get("fixedAmount") or b.get("amount") or b.get("localAmount"),
+        })
+
+    return normalized
+
+
+class ReloadlyTopupIn(BaseModel):
+    operator: str
+    phone: str
+    type: Literal["airtime", "bundle"]
+    amount: Optional[float] = None
+    bundleId: Optional[str] = None
+
+
+@api.post("/reloadly/topup")
+async def reloadly_topup(data: ReloadlyTopupIn, current=Depends(get_current_user)):
+    op = await resolve_operator(data.operator)
+    operator_id = op["operatorId"]
+
+    record = {
+        "id": new_id(),
+        "user_id": current["id"],
+        "operator": data.operator,
+        "phone": data.phone,
+        "type": data.type,
+        "amount": data.amount,
+        "bundleName": None,
+        "status": "pending",
+        "created_at": now_iso(),
+    }
+
+    try:
+        if data.type == "airtime":
+            if not data.amount:
+                raise HTTPException(status_code=400, detail="Amount is required for airtime top-ups")
+
+            # Debit wallet before sending the top-up to Reloadly.
+            debit = await db.users.update_one(
+                {"id": current["id"], "wallet_balance": {"$gte": data.amount}},
+                {"$inc": {"wallet_balance": -data.amount}},
+            )
+            if debit.modified_count != 1:
+                raise HTTPException(status_code=400, detail="Insufficient wallet balance")
+
+            result = await reloadly.topup(
+                operator_id=operator_id,
+                phone=data.phone,
+                amount=data.amount,
+                country_code="ZW",
+                custom_identifier=record["id"],
+            )
+        else:
+            if not data.bundleId:
+                raise HTTPException(status_code=400, detail="bundleId is required for bundle top-ups")
+
+            result = await reloadly.bundle_topup(
+                operator_id=operator_id,
+                bundle_id=int(data.bundleId),
+                phone=data.phone,
+                country_code="ZW",
+                custom_identifier=record["id"],
+            )
+
+        record["status"] = "success"
+        record["reloadly_transaction_id"] = result.get("transactionId")
+
+    except ReloadlyError as exc:
+        record["status"] = "failed"
+        record["error"] = exc.message
+
+        # Refund the wallet debit if airtime failed after we charged the user.
+        if data.type == "airtime" and data.amount:
+            await db.users.update_one(
+                {"id": current["id"]},
+                {"$inc": {"wallet_balance": data.amount}},
+            )
+
+        await db.reloadly_topups.insert_one({**record})
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+    await db.reloadly_topups.insert_one({**record})
+    record.pop("_id", None)
+
+    return {"message": "Top-up sent successfully.", "topup": record}
+
+
+@api.get("/reloadly/topups")
+async def reloadly_topup_history(operator: Optional[str] = None, current=Depends(get_current_user)):
+    query = {"user_id": current["id"]}
+    if operator:
+        query["operator"] = operator
+
+    items = await db.reloadly_topups.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return items
 
 
 # ----- Marketplace -----
@@ -3199,6 +3352,8 @@ async def on_startup():
         sparse=True,
     )
     await db.payment_transactions.create_index([("user_id", 1), ("created_at", -1)])
+    await db.reloadly_topups.create_index([("user_id", 1), ("created_at", -1)])
+    await db.reloadly_topups.create_index([("user_id", 1), ("operator", 1)])
 
     admin_email = os.environ.get("ADMIN_EMAIL", "").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "")
