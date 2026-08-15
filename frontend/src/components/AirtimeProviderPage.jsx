@@ -80,6 +80,9 @@ export default function AirtimeProviderPage({
 
   const [walletError, setWalletError] = useState(null);
 
+  // Wallet balance, fetched up front so the user can see it before paying.
+  const [walletBalance, setWalletBalance] = useState(null);
+
   const [history, setHistory] = useState(null);
   const [historyError, setHistoryError] = useState(null);
 
@@ -95,6 +98,17 @@ export default function AirtimeProviderPage({
         setBundles([]);
       });
   }, [tab, slug, bundles]);
+
+  const fetchBalance = useCallback(() => {
+    api
+      .get("/wallet/balance")
+      .then(({ data }) => {
+        setWalletBalance(Number(data?.balance ?? 0));
+      })
+      .catch(() => {
+        setWalletBalance(null);
+      });
+  }, []);
 
   const fetchHistory = useCallback(() => {
     setHistoryError(null);
@@ -117,8 +131,9 @@ export default function AirtimeProviderPage({
   }, [slug]);
 
   useEffect(() => {
+    fetchBalance();
     fetchHistory();
-  }, [fetchHistory]);
+  }, [fetchBalance, fetchHistory]);
 
   const effectiveAmount = customAmount
     ? Number(customAmount)
@@ -132,6 +147,18 @@ export default function AirtimeProviderPage({
           0
       )
     : 0;
+
+  // Cost of whatever is currently selected, regardless of tab.
+  const currentCost =
+    tab === "airtime"
+      ? effectiveAmount || 0
+      : selectedBundlePrice;
+
+  // Only warn client-side once we actually know both numbers.
+  const knownInsufficient =
+    currentCost > 0 &&
+    walletBalance !== null &&
+    currentCost > walletBalance;
 
   const tabButtonClasses = (t) =>
     `flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg py-2.5 text-xs md:text-sm font-medium transition-colors ${
@@ -206,6 +233,12 @@ export default function AirtimeProviderPage({
       setCustomAmount("");
       setSelectedBundle(null);
 
+      if (typeof data?.wallet_balance === "number") {
+        setWalletBalance(data.wallet_balance);
+      } else {
+        fetchBalance();
+      }
+
       fetchHistory();
     } catch (err) {
       const responseData =
@@ -251,6 +284,11 @@ export default function AirtimeProviderPage({
             Number(detailObject?.required || 0),
         });
 
+        // Keep the displayed balance in sync with what the backend saw.
+        if (typeof detailObject?.balance === "number") {
+          setWalletBalance(detailObject.balance);
+        }
+
         return;
       }
 
@@ -288,12 +326,24 @@ export default function AirtimeProviderPage({
           </p>
         </div>
 
-        <Link
-          to="/airtime"
-          className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium w-fit bg-neutral-100 dark:bg-neutral-900 text-neutral-500 dark:text-neutral-400"
-        >
-          Airtime & Bills
-        </Link>
+        <div className="flex items-center gap-2">
+          {walletBalance !== null && (
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium bg-neutral-100 dark:bg-neutral-900 text-black dark:text-white"
+              data-testid={`${slug}-wallet-balance`}
+            >
+              <Wallet size={14} weight="bold" className="text-green-600" />
+              ${walletBalance.toFixed(2)}
+            </span>
+          )}
+
+          <Link
+            to="/airtime"
+            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium w-fit bg-neutral-100 dark:bg-neutral-900 text-neutral-500 dark:text-neutral-400"
+          >
+            Airtime & Bills
+          </Link>
+        </div>
       </div>
 
       <div className="rounded-2xl p-6 md:p-8 max-w-md mx-auto bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
@@ -486,9 +536,33 @@ export default function AirtimeProviderPage({
             </div>
           )}
 
+          {/* ======================================================
+              LIVE, PRE-SUBMIT LOW-BALANCE WARNING
+              (backend still enforces this regardless)
+          ======================================================= */}
+
+          {knownInsufficient && !walletError && (
+            <div
+              className="mt-4 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-3"
+              data-testid={`${slug}-precheck-warning`}
+            >
+              <p className="text-xs text-amber-800 dark:text-amber-300">
+                This costs ${currentCost.toFixed(2)} but your wallet only
+                has ${walletBalance.toFixed(2)}.
+              </p>
+
+              <Link
+                to="/wallet"
+                className="mt-2 inline-block text-xs font-semibold text-green-700 dark:text-green-500"
+              >
+                Top up wallet →
+              </Link>
+            </div>
+          )}
+
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || knownInsufficient}
             className="w-full mt-5 h-14 rounded-xl text-base font-medium bg-green-600 text-black flex items-center justify-center gap-2 disabled:opacity-50 transition-opacity"
             data-testid={`${slug}-submit`}
           >
@@ -528,7 +602,7 @@ export default function AirtimeProviderPage({
           </button>
 
           {/* ======================================================
-              INSUFFICIENT WALLET BALANCE
+              INSUFFICIENT WALLET BALANCE (from backend response)
           ======================================================= */}
 
           {walletError && (
