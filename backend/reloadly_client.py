@@ -173,10 +173,16 @@ class ReloadlyClient:
 
         url = f"{base_url}/{path.lstrip('/')}"
 
+accept_header = (
+            "application/com.reloadly.topups-v1+json"
+            if service == "airtime"
+            else "application/com.reloadly.utilities-v1+json"
+        )
+
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-            "Accept": "application/json",
+            "Accept": accept_header,
         }
 
         async with httpx.AsyncClient(timeout=45.0) as client:
