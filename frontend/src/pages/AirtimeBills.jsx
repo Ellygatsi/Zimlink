@@ -2,8 +2,6 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight, Lightning, Receipt, CheckCircle } from "@phosphor-icons/react";
 
-import Layout from "@/components/Layout"; // ⚠️ adjust this path to match where Layout.jsx actually is in your project
-
 import econetLogo from "@/Assets/econet.png";
 import netoneLogo from "@/Assets/netone.png";
 import zetdcLogo from "@/Assets/Zetdc.png";
@@ -84,57 +82,55 @@ function ProviderRow({ to, name, tagline, logo, initials, initialsColor, testId 
 
 export default function AirtimeBills() {
   return (
-    <Layout>
-      <div className="space-y-5 md:space-y-6" data-testid="airtime-bills-page">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-3">
-          <div>
-            <p className="text-[10px] md:text-xs font-medium tracking-widest text-green-500 uppercase">
-              Airtime & Bills
-            </p>
-            <h1 className="text-3xl md:text-6xl font-medium tracking-tight mt-1.5 md:mt-2 text-black dark:text-white">
-              Top up.
-            </h1>
-            <p className="text-xs md:text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 md:mt-2">
-              Send airtime or pay a bill back home, instantly.
-            </p>
-          </div>
-
-          <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium w-fit bg-green-600 text-black">
-            <CheckCircle size={14} weight="bold" />
-            Reloadly
-          </span>
+    <div className="space-y-5 md:space-y-6" data-testid="airtime-bills-page">
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-3">
+        <div>
+          <p className="text-[10px] md:text-xs font-medium tracking-widest text-green-500 uppercase">
+            Airtime & Bills
+          </p>
+          <h1 className="text-3xl md:text-6xl font-medium tracking-tight mt-1.5 md:mt-2 text-black dark:text-white">
+            Top up.
+          </h1>
+          <p className="text-xs md:text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 md:mt-2">
+            Send airtime or pay a bill back home, instantly.
+          </p>
         </div>
 
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Lightning size={15} weight="fill" className="text-green-600" />
-            <p className="text-[10px] md:text-xs font-medium tracking-widest text-neutral-500 dark:text-neutral-400 uppercase">
-              Airtime
-            </p>
-          </div>
+        <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium w-fit bg-green-600 text-black">
+          <CheckCircle size={14} weight="bold" />
+          Reloadly
+        </span>
+      </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 md:gap-3">
-            {AIRTIME_PROVIDERS.map((p) => (
-              <ProviderRow key={p.slug} to={`/airtime/${p.slug}`} testId={`airtime-provider-${p.slug}`} {...p} />
-            ))}
-          </div>
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Lightning size={15} weight="fill" className="text-green-600" />
+          <p className="text-[10px] md:text-xs font-medium tracking-widest text-neutral-500 dark:text-neutral-400 uppercase">
+            Airtime
+          </p>
         </div>
 
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Receipt size={15} weight="fill" className="text-green-600" />
-            <p className="text-[10px] md:text-xs font-medium tracking-widest text-neutral-500 dark:text-neutral-400 uppercase">
-              Bill payments
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 md:gap-3">
-            {BILL_PROVIDERS.map((p) => (
-              <ProviderRow key={p.slug} to={`/airtime/${p.slug}`} testId={`bill-provider-${p.slug}`} {...p} />
-            ))}
-          </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 md:gap-3">
+          {AIRTIME_PROVIDERS.map((p) => (
+            <ProviderRow key={p.slug} to={`/airtime/${p.slug}`} testId={`airtime-provider-${p.slug}`} {...p} />
+          ))}
         </div>
       </div>
-    </Layout>
+
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Receipt size={15} weight="fill" className="text-green-600" />
+          <p className="text-[10px] md:text-xs font-medium tracking-widest text-neutral-500 dark:text-neutral-400 uppercase">
+            Bill payments
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 md:gap-3">
+          {BILL_PROVIDERS.map((p) => (
+            <ProviderRow key={p.slug} to={`/airtime/${p.slug}`} testId={`bill-provider-${p.slug}`} {...p} />
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }

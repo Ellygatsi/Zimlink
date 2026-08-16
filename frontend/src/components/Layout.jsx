@@ -12,6 +12,7 @@ import {
   Gear,
   CurrencyDollar,
   CalendarStar,
+  Lightning,
   List,
   X,
   Sun,
@@ -28,6 +29,7 @@ const NAV = [
   { to: "/calls", label: "Calls", icon: Phone },
   { to: "/wallet", label: "Wallet", icon: Wallet },
   { to: "/marketplace", label: "Market", icon: Storefront },
+  { to: "/airtime", label: "Top up", icon: Lightning },
   { to: "/events", label: "Events", icon: CalendarStar },
   { to: "/community", label: "Community", icon: ChatsCircle },
 ];
