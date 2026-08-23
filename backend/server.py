@@ -1465,8 +1465,9 @@ async def transactions(current=Depends(get_current_user)):
 async def get_app_settings() -> dict:
     """Global wallet/top-up settings.
 
-    Users are credited the full package amount after Pesepay confirms payment.
-    Processing fees are not shown to users and are not deducted from wallet credit.
+    The deposit fee is charged ON TOP of the package amount. Users are always
+    credited the full package amount they selected; the fee is added to what
+    gets sent to Pesepay, not subtracted from what lands in the wallet.
     """
     settings = await db.app_settings.find_one({"id": "global"}, {"_id": 0})
     if not settings:
@@ -1476,6 +1477,7 @@ async def get_app_settings() -> dict:
             "min_topup": 5.0,
             "max_topup": 500.0,
             "topup_packages": [5.0, 10.0, 25.0, 50.0, 100.0, 250.0],
+            "airtime_fee_percent": 0.0,
             "created_at": now_iso(),
         }
         await db.app_settings.insert_one(settings)
@@ -1486,18 +1488,23 @@ async def get_app_settings() -> dict:
 @api.get("/wallet/topup/packages")
 async def list_topup_packages(current=Depends(get_current_user)):
     settings = await get_app_settings()
+    fee_percent = float(settings.get("deposit_fee_percent", 0.0))
     packages = []
 
     for amount in settings.get("topup_packages", [5.0, 10.0, 25.0, 50.0, 100.0]):
         amount_f = float(amount)
+        fee = round(amount_f * fee_percent / 100.0, 2)
         packages.append({
             "amount": amount_f,
-            "fee": 0.0,
+            "fee": fee,
+            # What actually gets sent to Pesepay: package amount + fee on top.
+            "charge_amount": round(amount_f + fee, 2),
+            # What lands in the wallet once payment is confirmed.
             "credited": amount_f,
         })
 
     return {
-        "deposit_fee_percent": 0.0,
+        "deposit_fee_percent": fee_percent,
         "packages": packages,
         "min_topup": float(settings.get("min_topup", 5.0)),
         "max_topup": float(settings.get("max_topup", 500.0)),
@@ -1750,6 +1757,36 @@ async def resolve_operator(slug: str) -> dict:
     raise HTTPException(status_code=404, detail=f"Could not find Reloadly operator for {slug}")
 
 
+async def get_bundle_details(operator_id: int, bundle_id: str) -> tuple:
+    """Look up a bundle's price and display name from Reloadly.
+
+    The frontend only sends a bundleId — the server must resolve the actual
+    price itself rather than trusting a client-supplied amount, otherwise a
+    user could tamper with the charge for a bundle top-up.
+    """
+    try:
+        data = await reloadly.get_bundles(operator_id)
+    except ReloadlyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+    bundles = data.get("bundles", []) if isinstance(data, dict) else []
+
+    for b in bundles:
+        if not isinstance(b, dict):
+            continue
+        current_id = b.get("id")
+        if current_id is None:
+            current_id = b.get("fixedAmount")
+        if str(current_id) == str(bundle_id):
+            price = b.get("fixedAmount") or b.get("amount") or b.get("localAmount")
+            if price is None:
+                raise HTTPException(status_code=400, detail="Could not determine bundle price")
+            name = b.get("name") or f"${price} bundle"
+            return float(price), name
+
+    raise HTTPException(status_code=404, detail="Bundle not found")
+
+
 @api.post("/wallet/topup/checkout")
 async def create_topup_checkout(
     data: TopUpRequest,
@@ -1766,7 +1803,12 @@ async def create_topup_checkout(
     if amount not in allowed:
         raise HTTPException(status_code=400, detail="Invalid package amount")
 
-    fee_amount = 0.0
+    fee_percent = float(settings.get("deposit_fee_percent", 0.0))
+    fee_amount = round(amount * fee_percent / 100.0, 2)
+    # The fee is added ON TOP of the package amount. Pesepay charges the
+    # customer charge_amount, but only the original package amount is ever
+    # credited to the wallet — the user gets exactly the balance they intended.
+    charge_amount = round(amount + fee_amount, 2)
     credited_amount = amount
     session_id = new_id()
 
@@ -1788,7 +1830,7 @@ async def create_topup_checkout(
 
     try:
         response = await _pesepay_initiate(
-            amount=amount,
+            amount=charge_amount,
             currency="USD",
             reason=f"ZimLink Wallet Top-up ${amount:.2f}",
             merchant_reference=session_id,
@@ -1838,6 +1880,7 @@ async def create_topup_checkout(
         "pesepay_environment": PESEPAY_ENV,
         "package_amount": amount,
         "fee_amount": fee_amount,
+        "charge_amount": charge_amount,
         "credited_amount": credited_amount,
         "currency": "usd",
         "status": "initiated",
@@ -1960,7 +2003,8 @@ async def topup_status(session_id: str, current=Depends(get_current_user)):
         "payment_status": updated.get("payment_status"),
         "amount": float(updated.get("package_amount", 0.0)),
         "credited": float(updated.get("credited_amount", 0.0)),
-        "fee": 0.0,
+        "fee": float(updated.get("fee_amount", 0.0)),
+        "charge_amount": float(updated.get("charge_amount", updated.get("package_amount", 0.0))),
         "provider": updated.get("provider", "pesepay"),
         "provider_status": updated.get("provider_status"),
     }
@@ -2032,42 +2076,67 @@ async def reloadly_topup(data: ReloadlyTopupIn, current=Depends(get_current_user
     op = await resolve_operator(data.operator)
     operator_id = op["operatorId"]
 
+    settings = await get_app_settings()
+    fee_percent = float(settings.get("airtime_fee_percent", 0.0))
+
+    bundle_name = None
+
+    if data.type == "airtime":
+        if not data.amount:
+            raise HTTPException(status_code=400, detail="Amount is required for airtime top-ups")
+        base_amount = float(data.amount)
+    else:
+        if not data.bundleId:
+            raise HTTPException(status_code=400, detail="bundleId is required for bundle top-ups")
+        base_amount, bundle_name = await get_bundle_details(operator_id, data.bundleId)
+
+    fee_amount = round(base_amount * fee_percent / 100.0, 2)
+    total_charge = round(base_amount + fee_amount, 2)
+
     record = {
         "id": new_id(),
         "user_id": current["id"],
+        "user_name": current.get("name", ""),
+        "user_email": current.get("email", ""),
         "operator": data.operator,
         "phone": data.phone,
         "type": data.type,
-        "amount": data.amount,
-        "bundleName": None,
+        "amount": base_amount,
+        "bundleName": bundle_name,
+        "fee_percent": fee_percent,
+        "fee_amount": fee_amount,
+        "total_charged": total_charge,
         "status": "pending",
         "created_at": now_iso(),
     }
 
+    # Debit wallet for the airtime/bundle cost PLUS the platform fee before
+    # sending the top-up to Reloadly.
+    debit = await db.users.update_one(
+        {"id": current["id"], "wallet_balance": {"$gte": total_charge}},
+        {"$inc": {"wallet_balance": -total_charge}},
+    )
+    if debit.modified_count != 1:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INSUFFICIENT_WALLET_BALANCE",
+                "message": "Insufficient wallet balance. Please reload your wallet to continue.",
+                "balance": float(current.get("wallet_balance", 0.0)),
+                "required": total_charge,
+            },
+        )
+
     try:
         if data.type == "airtime":
-            if not data.amount:
-                raise HTTPException(status_code=400, detail="Amount is required for airtime top-ups")
-
-            # Debit wallet before sending the top-up to Reloadly.
-            debit = await db.users.update_one(
-                {"id": current["id"], "wallet_balance": {"$gte": data.amount}},
-                {"$inc": {"wallet_balance": -data.amount}},
-            )
-            if debit.modified_count != 1:
-                raise HTTPException(status_code=400, detail="Insufficient wallet balance")
-
             result = await reloadly.topup(
                 operator_id=operator_id,
                 phone=data.phone,
-                amount=data.amount,
+                amount=base_amount,
                 country_code="ZW",
                 custom_identifier=record["id"],
             )
         else:
-            if not data.bundleId:
-                raise HTTPException(status_code=400, detail="bundleId is required for bundle top-ups")
-
             result = await reloadly.bundle_topup(
                 operator_id=operator_id,
                 bundle_id=int(data.bundleId),
@@ -2083,12 +2152,12 @@ async def reloadly_topup(data: ReloadlyTopupIn, current=Depends(get_current_user
         record["status"] = "failed"
         record["error"] = exc.message
 
-        # Refund the wallet debit if airtime failed after we charged the user.
-        if data.type == "airtime" and data.amount:
-            await db.users.update_one(
-                {"id": current["id"]},
-                {"$inc": {"wallet_balance": data.amount}},
-            )
+        # Refund the full wallet debit (cost + fee) if the top-up failed after
+        # we already charged the user.
+        await db.users.update_one(
+            {"id": current["id"]},
+            {"$inc": {"wallet_balance": total_charge}},
+        )
 
         await db.reloadly_topups.insert_one({**record})
         raise HTTPException(status_code=exc.status_code, detail=exc.message)
@@ -2931,6 +3000,110 @@ async def admin_delete_rate(rate_id: str, _=Depends(require_admin)):
     await db.call_rates.delete_one({"id": rate_id})
     return {"ok": True}
 
+
+# ----- Admin: Airtime fee & collections -----
+class AirtimeFeeIn(BaseModel):
+    airtime_fee_percent: float = Field(ge=0, le=100)
+
+
+@api.get("/admin/airtime-fee")
+async def admin_get_airtime_fee(_=Depends(require_admin)):
+    settings = await get_app_settings()
+    return {"airtime_fee_percent": float(settings.get("airtime_fee_percent", 0.0))}
+
+
+@api.put("/admin/airtime-fee")
+async def admin_update_airtime_fee(data: AirtimeFeeIn, _=Depends(require_admin)):
+    await db.app_settings.update_one(
+        {"id": "global"},
+        {"$set": {"airtime_fee_percent": float(data.airtime_fee_percent)}},
+        upsert=True,
+    )
+    return {"airtime_fee_percent": float(data.airtime_fee_percent)}
+
+
+@api.get("/admin/airtime-stats")
+async def admin_airtime_stats(days: int = 30, _=Depends(require_admin)):
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    pipeline = [
+        {"$match": {"created_at": {"$gte": cutoff}, "status": "success"}},
+        {"$group": {
+            "_id": None,
+            "count": {"$sum": 1},
+            "total_volume": {"$sum": "$amount"},
+            "total_fees": {"$sum": "$fee_amount"},
+            "total_charged": {"$sum": "$total_charged"},
+        }},
+    ]
+    agg = await db.reloadly_topups.aggregate(pipeline).to_list(1)
+    summary = agg[0] if agg else {
+        "count": 0, "total_volume": 0.0, "total_fees": 0.0, "total_charged": 0.0,
+    }
+    summary.pop("_id", None)
+
+    by_operator_pipeline = [
+        {"$match": {"created_at": {"$gte": cutoff}, "status": "success"}},
+        {"$group": {
+            "_id": "$operator",
+            "count": {"$sum": 1},
+            "volume": {"$sum": "$amount"},
+            "fees": {"$sum": "$fee_amount"},
+        }},
+        {"$sort": {"fees": -1}},
+    ]
+    by_operator_raw = await db.reloadly_topups.aggregate(by_operator_pipeline).to_list(20)
+    by_operator = [
+        {
+            "operator": row["_id"],
+            "count": row.get("count", 0),
+            "volume": row.get("volume", 0.0),
+            "fees": row.get("fees", 0.0),
+        }
+        for row in by_operator_raw
+    ]
+
+    by_day_pipeline = [
+        {"$match": {"created_at": {"$gte": cutoff}, "status": "success"}},
+        {"$group": {
+            "_id": {"$substr": ["$created_at", 0, 10]},
+            "count": {"$sum": 1},
+            "volume": {"$sum": "$amount"},
+            "fees": {"$sum": "$fee_amount"},
+        }},
+        {"$sort": {"_id": 1}},
+    ]
+    by_day_raw = await db.reloadly_topups.aggregate(by_day_pipeline).to_list(60)
+    by_day = [
+        {"date": row["_id"], "count": row.get("count", 0), "volume": row.get("volume", 0.0), "fees": row.get("fees", 0.0)}
+        for row in by_day_raw
+    ]
+
+    return {
+        "window_days": days,
+        "summary": summary,
+        "by_operator": by_operator,
+        "by_day": by_day,
+    }
+
+
+@api.get("/admin/airtime-transactions")
+async def admin_airtime_transactions(
+    limit: int = 200,
+    status: Optional[str] = None,
+    operator: Optional[str] = None,
+    _=Depends(require_admin),
+):
+    query = {}
+    if status and status != "all":
+        query["status"] = status
+    if operator and operator != "all":
+        query["operator"] = operator
+
+    items = await db.reloadly_topups.find(query, {"_id": 0}).sort("created_at", -1).to_list(min(limit, 500))
+    return items
+
+
 @api.get("/admin/users")
 async def admin_list_users(_=Depends(require_admin)):
     items = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(500)
@@ -3100,7 +3273,8 @@ async def admin_topup_stats(days: int = 30, _=Depends(require_admin)):
         {"$group": {
             "_id": None,
             "count": {"$sum": 1},
-            "gross": {"$sum": "$package_amount"},
+            # Actual money collected (package amount + fee charged on top).
+            "gross": {"$sum": "$charge_amount"},
             "fees": {"$sum": "$fee_amount"},
             "credited": {"$sum": "$credited_amount"},
         }},
@@ -3402,6 +3576,7 @@ async def on_startup():
     await db.payment_transactions.create_index([("user_id", 1), ("created_at", -1)])
     await db.reloadly_topups.create_index([("user_id", 1), ("created_at", -1)])
     await db.reloadly_topups.create_index([("user_id", 1), ("operator", 1)])
+    await db.reloadly_topups.create_index([("status", 1), ("created_at", -1)])
 
     admin_email = os.environ.get("ADMIN_EMAIL", "").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "")
