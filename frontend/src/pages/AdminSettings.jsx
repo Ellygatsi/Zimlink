@@ -68,14 +68,16 @@ export default function AdminSettings() {
         <p className="overline text-neutral-500 mt-3">REVENUE LEVERS</p>
         <h1 className="text-5xl md:text-6xl font-black tracking-tighter mt-2">Settings.</h1>
         <p className="text-sm text-neutral-700 mt-2 max-w-2xl">
-          Control deposit fees and top-up packages. Changes apply immediately to new top-ups.
+          Control deposit fees and top-up packages. The fee is charged on top
+          of each package — users always receive the full amount they choose,
+          and the fee is added to what their card is charged.
         </p>
       </div>
 
       {/* Top-up Revenue KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="nb-card p-4 backdrop-blur-sm" style={{ backgroundColor: ACCENTS.wallet }}>
-          <p className="overline">GROSS · 30D</p>
+          <p className="overline">CHARGED · 30D</p>
           <p className="text-2xl md:text-3xl font-black mono mt-1">${s.gross.toFixed(2)}</p>
         </div>
         <div className="nb-card p-4 backdrop-blur-sm bg-white/95">
@@ -96,7 +98,10 @@ export default function AdminSettings() {
       <div className="nb-card p-6 bg-white/95 backdrop-blur-sm space-y-4">
         <h2 className="text-2xl font-black">Deposit fee</h2>
         <p className="text-sm text-neutral-600">
-          Charged on every Stripe top-up. User pays the full package amount; this % is kept by the platform.
+          Charged on top of every wallet top-up. If a user picks a $10
+          package with a 5% fee, their card is charged $10.50 and their
+          wallet is still credited exactly $10 — the fee is never deducted
+          from what they receive.
         </p>
         <div className="grid grid-cols-3 gap-4">
           <div>
@@ -176,32 +181,37 @@ export default function AdminSettings() {
               <tr className="border-b-2 border-black text-left">
                 <th className="pb-2 overline">When</th>
                 <th className="pb-2 overline">User</th>
-                <th className="pb-2 overline text-right">Gross</th>
+                <th className="pb-2 overline text-right">Package</th>
                 <th className="pb-2 overline text-right">Fee</th>
+                <th className="pb-2 overline text-right">Charged</th>
                 <th className="pb-2 overline text-right">Credited</th>
                 <th className="pb-2 overline text-right">Status</th>
               </tr>
             </thead>
             <tbody>
               {(stats?.recent || []).length === 0 && (
-                <tr><td colSpan={6} className="py-4 text-neutral-500 text-center">No top-ups yet.</td></tr>
+                <tr><td colSpan={7} className="py-4 text-neutral-500 text-center">No top-ups yet.</td></tr>
               )}
-              {(stats?.recent || []).map((t) => (
-                <tr key={t.id} className="border-b border-neutral-200">
-                  <td className="py-2 mono text-xs whitespace-nowrap">{new Date(t.created_at).toLocaleString()}</td>
-                  <td className="py-2">{t.user_email}</td>
-                  <td className="py-2 mono text-right">${t.package_amount.toFixed(2)}</td>
-                  <td className="py-2 mono text-right text-[#009639]">${t.fee_amount.toFixed(2)}</td>
-                  <td className="py-2 mono text-right">${t.credited_amount.toFixed(2)}</td>
-                  <td className="py-2 text-right">
-                    <span className={`nb-pill text-[9px] ${
-                      t.payment_status === "paid" ? "bg-[#009639] text-white" :
-                      t.status === "expired" ? "bg-[#DE2010] text-white" :
-                      "bg-[#FFCD00]"
-                    }`}>{t.payment_status === "paid" ? "paid" : t.status}</span>
-                  </td>
-                </tr>
-              ))}
+              {(stats?.recent || []).map((t) => {
+                const chargeAmount = t.charge_amount ?? (t.package_amount + (t.fee_amount || 0));
+                return (
+                  <tr key={t.id} className="border-b border-neutral-200">
+                    <td className="py-2 mono text-xs whitespace-nowrap">{new Date(t.created_at).toLocaleString()}</td>
+                    <td className="py-2">{t.user_email}</td>
+                    <td className="py-2 mono text-right">${t.package_amount.toFixed(2)}</td>
+                    <td className="py-2 mono text-right text-[#009639]">${(t.fee_amount || 0).toFixed(2)}</td>
+                    <td className="py-2 mono text-right font-bold">${chargeAmount.toFixed(2)}</td>
+                    <td className="py-2 mono text-right">${t.credited_amount.toFixed(2)}</td>
+                    <td className="py-2 text-right">
+                      <span className={`nb-pill text-[9px] ${
+                        t.payment_status === "paid" ? "bg-[#009639] text-white" :
+                        t.status === "expired" ? "bg-[#DE2010] text-white" :
+                        "bg-[#FFCD00]"
+                      }`}>{t.payment_status === "paid" ? "paid" : t.status}</span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

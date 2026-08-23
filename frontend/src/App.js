@@ -16,6 +16,7 @@ import EventDetail from "@/pages/EventDetail";
 import Community from "@/pages/Community";
 import AdminDashboard from "@/pages/AdminDashboard";
 import AdminRates from "@/pages/AdminRates";
+import AdminRevenue from "@/pages/AdminRevenue";
 import AdminSettings from "@/pages/AdminSettings";
 import AdminUsers from "@/pages/AdminUsers";
 import AdminGuard from "@/components/AdminGuard";
@@ -180,6 +181,15 @@ function App() {
               element={
                 <AdminProtected>
                   <AdminRates />
+                </AdminProtected>
+              }
+            />
+
+            <Route
+              path="/admin/revenue"
+              element={
+                <AdminProtected>
+                  <AdminRevenue />
                 </AdminProtected>
               }
             />

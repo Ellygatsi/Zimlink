@@ -117,14 +117,29 @@ export default function WalletPage() {
     }
   }, [cancelled, navigate]);
 
+  // Normalizes each package into a consistent shape so the UI can show both
+  // what the user will be charged and what actually lands in their wallet.
   const normalizePackages = () => {
     const raw = packages?.packages || [];
 
-    return raw.map((p) => {
-      if (typeof p === "number") return p;
-      if (typeof p === "string") return Number(p);
-      return Number(p.amount || p.package_amount || 0);
-    }).filter((n) => n > 0);
+    return raw
+      .map((p) => {
+        if (typeof p === "number") {
+          return { amount: p, fee: 0, chargeAmount: p, credited: p };
+        }
+        if (typeof p === "string") {
+          const n = Number(p);
+          return { amount: n, fee: 0, chargeAmount: n, credited: n };
+        }
+
+        const amount = Number(p.amount || p.package_amount || 0);
+        const fee = Number(p.fee || 0);
+        const chargeAmount = Number(p.charge_amount ?? amount + fee);
+        const credited = Number(p.credited ?? amount);
+
+        return { amount, fee, chargeAmount, credited };
+      })
+      .filter((p) => p.amount > 0);
   };
 
   const startTopUp = async (amount) => {
@@ -281,6 +296,15 @@ export default function WalletPage() {
                 0
               );
 
+              const chargeAmount = Number(
+                tx.charge_amount ||
+                tx.credited_amount ||
+                tx.package_amount ||
+                0
+              );
+
+              const feeAmount = Number(tx.fee_amount || 0);
+
               const status = String(
                 tx.status || tx.payment_status || "completed"
               ).toLowerCase();
@@ -324,6 +348,9 @@ export default function WalletPage() {
                         ? new Date(tx.created_at).toLocaleString()
                         : "Date unavailable"}
                       {tx.note ? ` · ${tx.note}` : ""}
+                      {!isFailed && feeAmount > 0
+                        ? ` · Charged $${chargeAmount.toFixed(2)} (incl. $${feeAmount.toFixed(2)} fee)`
+                        : ""}
                     </p>
                   </div>
 
@@ -370,31 +397,43 @@ export default function WalletPage() {
             </div>
 
             <p className="text-sm text-neutral-500">
-              Add funds securely using your debit or credit card. The full amount you choose will be added to your ZimLink wallet.
+              Choose how much you want added to your ZimLink wallet. If a
+              processing fee applies, it's added on top of your card charge —
+              you always receive the full amount you pick.
             </p>
 
             <div className="grid grid-cols-2 gap-3">
-              {normalizePackages().map((amount) => (
+              {normalizePackages().map((pkg) => (
                 <button
-                  key={amount}
-                  onClick={() => startTopUp(amount)}
+                  key={pkg.amount}
+                  onClick={() => startTopUp(pkg.amount)}
                   disabled={busy}
-                  data-testid={`topup-package-${amount}`}
+                  data-testid={`topup-package-${pkg.amount}`}
                   className="rounded-xl p-4 text-left bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 hover:border-green-600 transition-colors disabled:opacity-50"
                 >
                   <span className="text-2xl font-medium text-black dark:text-white block">
-                    ${amount.toFixed(0)}
+                    ${pkg.amount.toFixed(0)}
                   </span>
 
                   <span className="text-xs text-neutral-500 font-medium mt-1 block">
-                    Instant wallet top-up
+                    {pkg.fee > 0
+                      ? `Charged $${pkg.chargeAmount.toFixed(2)} total`
+                      : "Instant wallet top-up"}
                   </span>
                 </button>
               ))}
             </div>
 
+            {packages?.deposit_fee_percent > 0 && (
+              <p className="text-[11px] text-neutral-400 text-center">
+                A {packages.deposit_fee_percent}% processing fee is added on
+                top of the amount you choose. Your wallet is always credited
+                the full package amount.
+              </p>
+            )}
+
             <p className="text-xs text-neutral-500 text-center">
-              Payments securely processed by Stripe.
+              Payments securely processed by Pesepay.
             </p>
           </div>
         </div>

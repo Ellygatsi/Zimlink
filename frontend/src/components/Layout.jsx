@@ -13,6 +13,7 @@ import {
   CurrencyDollar,
   CalendarStar,
   Lightning,
+  ChartLineUp,
   List,
   X,
   Sun,
@@ -38,6 +39,7 @@ const ADMIN_NAV = [
   { to: "/admin", label: "Admin", icon: ShieldStar },
   { to: "/admin/users", label: "Users", icon: Users },
   { to: "/admin/rates", label: "Rates", icon: CurrencyDollar },
+  { to: "/admin/revenue", label: "Revenue", icon: ChartLineUp },
   { to: "/admin/settings", label: "Settings", icon: Gear },
 ];
 
