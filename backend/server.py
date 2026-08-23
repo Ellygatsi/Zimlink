@@ -3285,6 +3285,120 @@ async def admin_topup_stats(days: int = 30, _=Depends(require_admin)):
     recent = await db.payment_transactions.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
     return {"window_days": days, "summary": summary, "recent": recent}
 
+
+# ----- Admin: Revenue dashboard (top-ups + calls, the two revenue streams) -----
+def _date_range_query(start: Optional[str], end: Optional[str]) -> dict:
+    """Build a created_at range filter from optional YYYY-MM-DD strings."""
+    if not start and not end:
+        return {}
+    date_filter = {}
+    if start:
+        date_filter["$gte"] = start
+    if end:
+        # Include the entire end day.
+        date_filter["$lte"] = f"{end}T23:59:59.999999"
+    return {"created_at": date_filter}
+
+
+@api.get("/admin/revenue/topups")
+async def admin_revenue_topups(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    status: Optional[str] = None,
+    _=Depends(require_admin),
+):
+    """
+    Revenue from wallet top-ups. 'Revenue' here is the platform fee charged
+    on top of each package — the package amount itself just becomes wallet
+    balance the user spends elsewhere, so it isn't counted as revenue.
+    """
+    query = _date_range_query(start, end)
+    if status and status != "all":
+        query["payment_status"] = status
+
+    items = await db.payment_transactions.find(query, {"_id": 0}).sort("created_at", -1).to_list(2000)
+
+    monthly_pipeline = [
+        {"$match": {**query, "payment_status": "paid"}},
+        {"$group": {
+            "_id": {"$substr": ["$created_at", 0, 7]},
+            "revenue": {"$sum": "$fee_amount"},
+            "gross": {"$sum": "$charge_amount"},
+            "credited": {"$sum": "$credited_amount"},
+            "count": {"$sum": 1},
+        }},
+        {"$sort": {"_id": 1}},
+    ]
+    monthly_raw = await db.payment_transactions.aggregate(monthly_pipeline).to_list(60)
+    monthly = [
+        {
+            "month": m["_id"],
+            "revenue": m.get("revenue", 0.0),
+            "gross": m.get("gross", 0.0),
+            "credited": m.get("credited", 0.0),
+            "count": m.get("count", 0),
+        }
+        for m in monthly_raw
+    ]
+
+    paid_only = [i for i in items if i.get("payment_status") == "paid"]
+    summary = {
+        "count": len(paid_only),
+        "revenue": sum(float(i.get("fee_amount", 0.0)) for i in paid_only),
+        "gross": sum(float(i.get("charge_amount", i.get("package_amount", 0.0))) for i in paid_only),
+        "credited": sum(float(i.get("credited_amount", 0.0)) for i in paid_only),
+    }
+
+    return {"summary": summary, "monthly": monthly, "transactions": items}
+
+
+@api.get("/admin/revenue/calls")
+async def admin_revenue_calls(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    _=Depends(require_admin),
+):
+    """Revenue from outbound calls — what customers were charged to place calls."""
+    query = {**_date_range_query(start, end), "direction": "outbound"}
+
+    items = await db.calls.find(query, {"_id": 0}).sort("created_at", -1).to_list(2000)
+
+    monthly_pipeline = [
+        {"$match": {**query, "billed": True}},
+        {"$group": {
+            "_id": {"$substr": ["$created_at", 0, 7]},
+            "revenue": {"$sum": "$charge_amount"},
+            "cost": {"$sum": "$cost_amount"},
+            "profit": {"$sum": "$profit_amount"},
+            "minutes": {"$sum": {"$divide": ["$duration_seconds", 60]}},
+            "count": {"$sum": 1},
+        }},
+        {"$sort": {"_id": 1}},
+    ]
+    monthly_raw = await db.calls.aggregate(monthly_pipeline).to_list(60)
+    monthly = [
+        {
+            "month": m["_id"],
+            "revenue": m.get("revenue", 0.0),
+            "cost": m.get("cost", 0.0),
+            "profit": m.get("profit", 0.0),
+            "minutes": m.get("minutes", 0.0),
+            "count": m.get("count", 0),
+        }
+        for m in monthly_raw
+    ]
+
+    billed_only = [i for i in items if i.get("billed")]
+    summary = {
+        "count": len(billed_only),
+        "revenue": sum(float(i.get("charge_amount", 0.0)) for i in billed_only),
+        "cost": sum(float(i.get("cost_amount", 0.0)) for i in billed_only),
+        "profit": sum(float(i.get("profit_amount", 0.0)) for i in billed_only),
+        "minutes": sum(float(i.get("duration_seconds", 0)) / 60.0 for i in billed_only),
+    }
+
+    return {"summary": summary, "monthly": monthly, "transactions": items}
+
 # ----- Profile / Account -----
 
 class UpdateProfileIn(BaseModel):
